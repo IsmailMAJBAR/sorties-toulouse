@@ -35,6 +35,7 @@ jobs:
         env:
           SITE_KEY: ${{ secrets.SITE_KEY }}
           TICKETMASTER_KEY: ${{ secrets.TICKETMASTER_KEY }}
+          GOOGLE_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_KEY }}
 
       - name: Vérifier que rien n'est publié en clair
         run: |

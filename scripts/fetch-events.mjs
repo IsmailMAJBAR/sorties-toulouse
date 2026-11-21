@@ -428,14 +428,18 @@ async function fetchTicketmaster() {
 // ---------- lieux & restos (sans date) : OpenStreetMap + Guide Michelin ----------
 // OpenStreetMap : © les contributeurs OpenStreetMap, licence ODbL (mention dans le pied de page du site).
 
-const OSM_QUERY = `[out:json][timeout:120];area["name"="Toulouse"]["admin_level"="8"]->.t;(
-nwr["amenity"~"^(restaurant|bar|pub|cafe)$"]["name"](area.t);
-nwr["leisure"~"^(escape_game|bowling_alley|trampoline_park|miniature_golf|amusement_arcade)$"]["name"](area.t);
-nwr["sport"="climbing"]["name"](area.t);
-nwr["tourism"~"^(museum|gallery|viewpoint)$"]["name"](area.t);
-nwr["tourism"="attraction"]["name"]["wikidata"](area.t);
-nwr["leisure"~"^(park|garden)$"]["name"]["wikidata"](area.t);
-);out center tags;`;
+// 3 petites requêtes plutôt qu'une grosse : Overpass répond souvent 504 (trop chargé) aux grosses
+const OSM_GROUPS = [
+  { name: 'restos', kinds: ['Resto'], q: 'nwr["amenity"="restaurant"]["name"](area.t);' },
+  { name: 'bars et cafés', kinds: ['Bar', 'Café'], q: 'nwr["amenity"~"^(bar|pub|cafe)$"]["name"](area.t);' },
+  {
+    name: 'activités et lieux', kinds: ['Activité', 'Lieu'],
+    q: 'nwr["leisure"~"^(escape_game|bowling_alley|trampoline_park|miniature_golf|amusement_arcade)$"]["name"](area.t);' +
+      'nwr["sport"="climbing"]["name"](area.t);nwr["tourism"~"^(museum|gallery|viewpoint)$"]["name"](area.t);' +
+      'nwr["tourism"="attraction"]["name"]["wikidata"](area.t);nwr["leisure"~"^(park|garden)$"]["name"]["wikidata"](area.t);',
+  },
+];
+const osmQuery = (body) => `[out:json][timeout:60];area["name"="Toulouse"]["admin_level"="8"]->.t;(${body});out center tags;`;
 
 const CUISINES = {
   french: 'française', pizza: 'pizza', asian: 'asiatique', japanese: 'japonaise', italian: 'italienne', regional: 'du Sud-Ouest',
@@ -468,34 +472,55 @@ function osmKind(t) {
   return null;
 }
 
-async function fetchOSM() {
-  let data, last;
-  // Overpass est souvent chargé (erreur 504) : 3 serveurs publics, 2 tours, avec une pause entre les tours
+// Overpass est souvent chargé (erreur 504) : 3 serveurs publics, 2 tours, avec une pause entre les tours
+async function overpass(query) {
   const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+  let last;
   for (const [i, endpoint] of [...endpoints, ...endpoints].entries()) {
-    if (data) break;
     if (i === endpoints.length) await sleep(20000);
     try {
       const r = await fetch(endpoint, {
         method: 'POST',
         headers: { 'user-agent': UA, 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(OSM_QUERY),
-        signal: AbortSignal.timeout(150000),
+        body: 'data=' + encodeURIComponent(query),
+        signal: AbortSignal.timeout(60000),
       });
-      if (!r.ok) throw new Error(`Overpass HTTP ${r.status}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
-      if ((j.elements || []).length) data = j; else throw new Error('Overpass : réponse vide');
+      if ((j.elements || []).length) return j.elements;
+      throw new Error('réponse vide');
     } catch (e) { last = e; }
   }
-  if (!data) throw last;
+  throw last;
+}
+
+async function fetchOSM(previous) {
   const out = [];
-  for (const el of data.elements || []) {
+  const failed = [];
+  for (const g of OSM_GROUPS) {
+    try {
+      for (const el of await overpass(osmQuery(g.q))) { const p = osmPlace(el); if (p) out.push(p); }
+    } catch (e) {
+      // ce groupe a échoué : on garde ceux de la veille pour ces types-là
+      const prev = (previous?.places || []).filter((p) => (p.sources || [])[0] === 'OpenStreetMap' && g.kinds.includes(p.kind));
+      prev.forEach((p) => out.push({ ...p, source: 'OpenStreetMap' }));
+      failed.push(`${g.name} : ${e.message}${prev.length ? ` (${prev.length} repris de la veille)` : ''}`);
+    }
+    await sleep(3000);
+  }
+  if (failed.length) console.warn(`  OpenStreetMap incomplet — ${failed.join(' ; ')}`);
+  if (!out.length) throw new Error(`Overpass indisponible — ${failed.join(' ; ')}`);
+  return out;
+}
+
+function osmPlace(el) {
+  {
     const t = el.tags || {};
     const k = osmKind(t);
-    if (!k || t.opening_hours === 'closed' || t.disused) continue;
+    if (!k || t.opening_hours === 'closed' || t.disused) return null;
     const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
-    if (lat == null) continue;
-    out.push({
+    if (lat == null) return null;
+    return {
       id: `osm-${el.type[0]}${el.id}`,
       name: clean(t.name),
       kind: k[0], detail: k[1],
@@ -510,9 +535,8 @@ async function fetchOSM() {
       notable: !!(t.wikidata || t.wikipedia),
       cuisineRaw: t.cuisine || '',
       source: 'OpenStreetMap',
-    });
+    };
   }
-  return out;
 }
 
 const MICHELIN_URL = 'https://guide.michelin.com/fr/fr/occitanie/toulouse/restaurants';
@@ -537,6 +561,11 @@ async function fetchMichelin() {
       url: href ? `https://guide.michelin.com${href}` : MICHELIN_URL,
       source: 'Guide Michelin',
     });
+  }
+  if (!out.length) {
+    // pour comprendre ce que le site a renvoyé (ex. page anti-robots : on ne la contourne pas, on garde la veille)
+    const guard = /captcha|challenge|access denied|are you a robot|cf-chl|datadome|perimeterx/i.test(html) ? ', page anti-robots' : '';
+    throw new Error(`page sans fiches resto (${Math.round(html.length / 1024)} Ko${guard})`);
   }
   return out;
 }
@@ -677,15 +706,28 @@ async function main() {
     .map(finalize)
     .sort((a, b) => a.sessions[0][0].localeCompare(b.sessions[0][0]) || a.title.localeCompare(b.title, 'fr'));
 
-  // lieux & restos (sans date), même principe de secours que pour les événements
+  // lieux & restos (sans date) : ils changent peu -> rechargés une fois par semaine seulement
+  // (moins de charge pour OpenStreetMap, moins de risques d'échec), même principe de secours sinon
+  const placesAge = previous.placesAt ? (Date.now() - Date.parse(previous.placesAt)) / 864e5 : Infinity;
+  const reusePlaces = placesAge < 7 && (previous.places || []).length > 100 && !process.env.FORCE_PLACES;
+  let placesAt = previous.placesAt || null;
   const placeList = [];
-  for (const s of PLACE_SOURCES) {
+  if (reusePlaces) {
+    for (const p of previous.places) placeList.push({ ...p, source: (p.sources || [])[0] });
+    for (const s of PLACE_SOURCES) {
+      const old = (previous.sources || []).find((x) => x.name === s.name);
+      report.push({ ...(old || { name: s.name, site: s.site, ok: true, count: 0 }), places: true });
+    }
+    console.log(`· Lieux : ceux du ${previous.placesAt.slice(0, 10)} (rechargés chaque semaine)`);
+  }
+  for (const s of reusePlaces ? [] : PLACE_SOURCES) {
     try {
-      const ps = await s.run();
+      const ps = await s.run(previous);
       if (!ps.length) throw new Error('0 lieu récupéré');
       ps.forEach((p) => placeList.push(p));
       report.push({ name: s.name, site: s.site, ok: true, count: ps.length, places: true });
       console.log(`✓ ${s.name} : ${ps.length} lieux`);
+      if (s.name === 'OpenStreetMap') placesAt = new Date().toISOString();
     } catch (err) {
       const kept = (previous.places || []).filter((p) => (p.sources || [])[0] === s.name).map((p) => ({ ...p, source: s.name }));
       kept.forEach((p) => placeList.push(p));
@@ -695,18 +737,21 @@ async function main() {
   }
   const places = mergePlaces(placeList).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
 
-  const head = { generatedAt: new Date().toISOString(), today, horizon, sources: report, categories: CATEGORIES };
+  const head = { generatedAt: new Date().toISOString(), today, horizon, placesAt, sources: report, categories: CATEGORIES };
   // un élément par ligne : l'historique Git reste lisible et léger d'un jour à l'autre
-  const json = JSON.stringify(head).slice(0, -1) +
+  const toJson = (h) => JSON.stringify(h).slice(0, -1) +
     ',"events":[\n' + events.map((e) => JSON.stringify(e)).join(',\n') + '\n]' +
     ',"places":[\n' + places.map((p) => JSON.stringify(p)).join(',\n') + '\n]}\n';
+  const json = toJson(head);
+  // la clé Google (notes Google Maps) ne va QUE dans la version chiffrée, jamais en clair
+  const encJson = process.env.GOOGLE_MAPS_KEY ? toJson({ ...head, googleKey: process.env.GOOGLE_MAPS_KEY.trim() }) : json;
   await mkdir(dirname(OUT), { recursive: true });
   if (!process.env.CI) {
     await writeFile(OUT, json);
     console.log(`→ ${events.length} événements écrits dans data/events.json (${(json.length / 1024).toFixed(0)} Ko, en clair, reste sur ce PC)`);
   }
   if (KEY) {
-    const box = await encrypt(json, KEY, cryptoConf);
+    const box = await encrypt(encJson, KEY, cryptoConf);
     await writeFile(OUT_ENC, box + '\n');
     console.log(`→ version chiffrée : data/events.enc.json (${(box.length / 1024).toFixed(0)} Ko)`);
   }
