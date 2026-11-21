@@ -390,7 +390,6 @@ function render() {
     html = `<div class="empty"><strong>Rien ne correspond.</strong>Essaie une autre période, ou retire un filtre.${ongoing.length && state.tab === 'events' ? `<br><br><button class="more" type="button" data-goto="ongoing">Voir les ${ongoing.length} activités en continu</button>` : ''}</div>`;
   }
   list.innerHTML = html;
-  hydrateGoogle(list);
   $('#more').hidden = shown >= total;
   $('#more').textContent = `Voir plus (${total - shown} restantes)`;
 }
@@ -438,80 +437,7 @@ const distM = (a, b) => {
 };
 const fmtDist = (m) => (m < 950 ? `${Math.max(50, Math.round(m / 50) * 50)} m` : `${(m / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} km`);
 
-// ---------- note Google Maps (API officielle Google Places, en direct) ----------
-// Google interdit de stocker ses notes : on les demande au moment de l'affichage, seulement pour les lieux
-// affichés en premier (et à la demande pour les autres), avec un plafond par visite pour rester dans le gratuit.
-// La clé est dans les données chiffrées (secret GOOGLE_MAPS_KEY), limitée au site dans la console Google.
-
-const GOOGLE = { cache: new Map(), calls: 0, MAX_PER_VISIT: 25, AUTO: 6 };
-const googleKey = () => DATA?.googleKey || '';
-const nameTokens = (s) => fold(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !['restaurant', 'resto', 'cafe', 'toulouse', 'chez'].includes(w));
-
-async function googleRating(p) {
-  if (GOOGLE.cache.has(p.id)) return GOOGLE.cache.get(p.id);
-  if (GOOGLE.calls >= GOOGLE.MAX_PER_VISIT) return { limit: true };
-  GOOGLE.calls++;
-  const job = (async () => {
-    const dLat = 0.003, dLon = 0.0042; // ≈ 330 m autour du lieu : on ne veut pas un homonyme à l'autre bout de la ville
-    const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': googleKey(),
-        'X-Goog-FieldMask': 'places.displayName,places.rating,places.userRatingCount,places.googleMapsUri',
-      },
-      body: JSON.stringify({
-        textQuery: `${p.name} Toulouse`, languageCode: 'fr', pageSize: 3,
-        locationRestriction: { rectangle: { low: { latitude: p.lat - dLat, longitude: p.lon - dLon }, high: { latitude: p.lat + dLat, longitude: p.lon + dLon } } },
-      }),
-    });
-    if (!r.ok) return { error: r.status };
-    const found = (await r.json()).places || [];
-    const toks = nameTokens(p.name);
-    const same = found.find((x) => {
-      const n = fold(x.displayName?.text || '');
-      return toks.length ? toks.some((t) => n.includes(t)) : n.includes(fold(p.name));
-    });
-    if (!same) return { none: true };
-    return { rating: same.rating, count: same.userRatingCount || 0, url: same.googleMapsUri };
-  })().catch(() => ({ error: 'réseau' }));
-  GOOGLE.cache.set(p.id, job);
-  return job;
-}
-
-function googleHtml(g) {
-  if (!g) return '';
-  if (g.rating) {
-    const n = g.rating.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-    const c = g.count.toLocaleString('fr-FR');
-    const inner = `<span class="g-star">★</span> ${n} <small>· ${c} avis Google</small>`;
-    return safeUrl(g.url) ? `<a class="tag tag--google" href="${esc(g.url)}" target="_blank" rel="noopener" title="Voir sur Google Maps">${inner}</a>` : `<span class="tag tag--google">${inner}</span>`;
-  }
-  if (g.none) return '<span class="tag">Pas de note Google</span>';
-  if (g.limit) return '<span class="tag">Notes Google : limite de la visite atteinte</span>';
-  return '<span class="tag">Note Google indisponible</span>';
-}
-
-// remplit les notes Google des fiches affichées : automatiquement pour celles marquées "auto"
-function hydrateGoogle(root = document) {
-  if (!googleKey()) return;
-  for (const el of root.querySelectorAll('.card.place')) {
-    const slot = el.querySelector('.gnote');
-    if (!slot || slot.dataset.done) continue;
-    const p = PLACES.find((x) => x.id === el.dataset.id);
-    if (!p) continue;
-    const known = GOOGLE.cache.get(p.id);
-    if (!known && !el.dataset.gauto) {
-      slot.innerHTML = '<button class="tag tag--gbtn" type="button" data-act="gnote">★ Note Google</button>';
-      continue;
-    }
-    slot.dataset.done = '1';
-    slot.innerHTML = '<span class="tag">★ …</span>';
-    googleRating(p).then((g) => { slot.innerHTML = googleHtml(g); });
-  }
-}
-
-function placeCard(p, sc, why, near = '', auto = false) {
+function placeCard(p, sc, why, near = '') {
   const url = safeUrl(p.url) || safeUrl(p.michelinUrl);
   const mapUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent([p.name, p.address, p.city || 'Toulouse'].filter(Boolean).join(', '));
   const note = noteHtml(sc, why);
@@ -526,9 +452,8 @@ function placeCard(p, sc, why, near = '', auto = false) {
     p.veg ? '<span class="tag">Végé</span>' : '',
     isTested ? '<span class="tag tag--free">Testé ✓</span>' : '',
     p.michelinUrl && p.url ? `<a class="tag tag--src" href="${esc(p.michelinUrl)}" target="_blank" rel="noopener">fiche Michelin</a>` : '',
-    googleKey() ? '<span class="gnote"></span>' : '',
   ].join('');
-  return `<article class="card place" data-kind="${esc(p.kind)}" data-id="${esc(p.id)}"${auto ? ' data-gauto="1"' : ''}>
+  return `<article class="card place" data-kind="${esc(p.kind)}" data-id="${esc(p.id)}">
     <div class="card__when"><span class="card__time card__kind" aria-hidden="true">${kind.icon}</span>${note.pill}</div>
     <div class="card__body">
       <h3>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)}</h3>
@@ -576,7 +501,7 @@ function renderPlaces(picking) {
   if (nTested) html += `<p class="tested-toggle"><button class="link" type="button" data-showtested>${state.showTested ? 'Masquer' : 'Afficher'} ${nTested > 1 ? `les ${nTested} lieux déjà testés` : 'le lieu déjà testé'}</button></p>`;
   html += '<div class="cards">';
   let shown = 0;
-  for (const r of rows) { if (shown >= limit) break; html += placeCard(r.p, r.s, r.why, '', shown < GOOGLE.AUTO); shown++; }
+  for (const r of rows) { if (shown >= limit) break; html += placeCard(r.p, r.s, r.why); shown++; }
   html += '</div>';
   return { html, total: rows.length, shown, all: all.length };
 }
@@ -663,12 +588,12 @@ function buildPlan(rows, a, b) {
       const food = bestNear(at, 'Resto', 1500, usedPlaces);
       if (food) {
         usedPlaces.add(food.p.id);
-        html += `<div class="slot slot--food"><h3 class="slot__label">🍽️ Pour manger · ${esc(where)}</h3>${placeCard(food.p, food.s, food.why, `à ${fmtDist(food.d)}`, true)}</div>`;
+        html += `<div class="slot slot--food"><h3 class="slot__label">🍽️ Pour manger · ${esc(where)}</h3>${placeCard(food.p, food.s, food.why, `à ${fmtDist(food.d)}`)}</div>`;
       }
       const drink = bestNear(food ? food.p : at, 'Bar', 900, usedPlaces);
       if (drink) {
         usedPlaces.add(drink.p.id);
-        html += `<div class="slot slot--food"><h3 class="slot__label">🍸 Un verre après</h3>${placeCard(drink.p, drink.s, drink.why, `à ${fmtDist(drink.d)}`, true)}</div>`;
+        html += `<div class="slot slot--food"><h3 class="slot__label">🍸 Un verre après</h3>${placeCard(drink.p, drink.s, drink.why, `à ${fmtDist(drink.d)}`)}</div>`;
       }
     }
     html += '</section>';
@@ -863,13 +788,6 @@ function bind() {
     const id = btn.closest('.card').dataset.id;
     const e = EVENTS.find((x) => x.id === id) || PLACES.find((x) => x.id === id); if (!e) return;
     const teach = e.sessions ? learn : learnPlace;
-    if (btn.dataset.act === 'gnote') {
-      const slot = btn.closest('.gnote');
-      slot.dataset.done = '1';
-      slot.innerHTML = '<span class="tag">★ …</span>';
-      googleRating(e).then((g) => { slot.innerHTML = googleHtml(g); });
-      return;
-    }
     if (btn.dataset.act === 'tested') {
       tested.has(id) ? tested.delete(id) : tested.add(id);
       store.set('sorties-testes', [...tested]);

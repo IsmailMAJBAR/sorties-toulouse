@@ -49,26 +49,7 @@ sélection). Pas d'avis clients : la note /10 vient de règles visibles sous cha
 Michelin (+2,5 à +4), cuisine à découvrir (+2), activité à tester (+2,5), lieu connu (+1), site web, terrasse,
 végé ; chaîne (−3) ; et tes ⭐ / 👎. Le bouton **✓ Testé** range un lieu dans « déjà testés ».
 Les lieux sont rechargés **une fois par semaine** (ils changent peu ; `FORCE_PLACES=1` pour forcer).
-
-### Note Google Maps (facultatif)
-
-Affichée sur les fiches (« ★ 4,6 · 1 234 avis Google », lien vers Google Maps) via l'**API officielle Google
-Places**. Google interdit de stocker ses notes : le site les demande **en direct**, automatiquement pour les
-6 premiers lieux affichés et ceux de « Mon programme », et au clic (« ★ Note Google ») pour les autres —
-25 au maximum par visite. Gratuit jusqu'à environ **1 000 notes par mois**, payant au-delà (≈ 35 $ les 1 000).
-
-1. https://console.cloud.google.com → créer un projet → activer **Places API (New)** (Google demande un
-   compte de facturation, même pour l'usage gratuit).
-2. **Identifiants → Créer une clé API**, puis la restreindre :
-   - *Restrictions d'application* : **Sites web** → `https://ismailmajbar.github.io/*`
-   - *Restrictions d'API* : **Places API (New)** uniquement.
-3. **Quotas** de Places API (New) : limiter « SearchText requests per day » à **30** → impossible de dépasser
-   le gratuit.
-4. Donner la clé au site (elle part dans les données **chiffrées**, jamais en clair) :
-   ```powershell
-   gh secret set GOOGLE_MAPS_KEY --repo IsmailMAJBAR/sorties-toulouse
-   gh workflow run update.yml --repo IsmailMAJBAR/sorties-toulouse
-   ```
+Pas de note Google intégrée : le lien 📍 de chaque fiche ouvre le lieu dans Google Maps, avec ses avis.
 
 ## Mon programme
 

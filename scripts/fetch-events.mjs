@@ -743,15 +743,13 @@ async function main() {
     ',"events":[\n' + events.map((e) => JSON.stringify(e)).join(',\n') + '\n]' +
     ',"places":[\n' + places.map((p) => JSON.stringify(p)).join(',\n') + '\n]}\n';
   const json = toJson(head);
-  // la clé Google (notes Google Maps) ne va QUE dans la version chiffrée, jamais en clair
-  const encJson = process.env.GOOGLE_MAPS_KEY ? toJson({ ...head, googleKey: process.env.GOOGLE_MAPS_KEY.trim() }) : json;
   await mkdir(dirname(OUT), { recursive: true });
   if (!process.env.CI) {
     await writeFile(OUT, json);
     console.log(`→ ${events.length} événements écrits dans data/events.json (${(json.length / 1024).toFixed(0)} Ko, en clair, reste sur ce PC)`);
   }
   if (KEY) {
-    const box = await encrypt(encJson, KEY, cryptoConf);
+    const box = await encrypt(json, KEY, cryptoConf);
     await writeFile(OUT_ENC, box + '\n');
     console.log(`→ version chiffrée : data/events.enc.json (${(box.length / 1024).toFixed(0)} Ko)`);
   }
