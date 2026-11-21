@@ -43,10 +43,11 @@ Le bouton **Tout** affiche tout, sans pré-filtre. Goûts, 👎 et favoris reste
 ## Lieux & restos
 
 Onglet des endroits **toujours dispo** à tester : restos, bars, cafés, activités (escalade, escape game, bowling,
-trampoline…) et lieux à voir (musées, galeries, parcs, monuments). Sources : **OpenStreetMap** (≈1 500 lieux à
-Toulouse, © les contributeurs OpenStreetMap, ODbL) et le **Guide Michelin** (≈50 restos : étoilés, Bib Gourmand,
-sélection). Pas d'avis clients : la note /10 vient de règles visibles sous chaque fiche (`placeScore` dans `app.js`) —
-Michelin (+2,5 à +4), cuisine à découvrir (+2), activité à tester (+2,5), lieu connu (+1), site web, terrasse,
+trampoline…) et lieux à voir (musées, galeries, parcs, monuments). Source : **OpenStreetMap** (≈1 500 lieux à
+Toulouse et en bordure, © les contributeurs OpenStreetMap, ODbL), interrogé en 4 petites requêtes par rectangle de
+carte. Le Guide Michelin a été essayé mais il bloque les serveurs de GitHub (page anti-robots) : pas utilisé.
+Pas d'avis clients : la note /10 vient de règles visibles sous chaque fiche (`placeScore` dans `app.js`) —
+cuisine à découvrir (+2), activité à tester (+2,5), lieu connu (+1), site web, terrasse,
 végé ; chaîne (−3) ; et tes ⭐ / 👎. Le bouton **✓ Testé** range un lieu dans « déjà testés ».
 Les lieux sont rechargés **une fois par semaine** (ils changent peu ; `FORCE_PLACES=1` pour forcer).
 Pas de note Google intégrée : le lien 📍 de chaque fiche ouvre le lieu dans Google Maps, avec ses avis.

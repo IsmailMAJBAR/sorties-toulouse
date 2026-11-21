@@ -428,18 +428,26 @@ async function fetchTicketmaster() {
 // ---------- lieux & restos (sans date) : OpenStreetMap + Guide Michelin ----------
 // OpenStreetMap : © les contributeurs OpenStreetMap, licence ODbL (mention dans le pied de page du site).
 
-// 3 petites requêtes plutôt qu'une grosse : Overpass répond souvent 504 (trop chargé) aux grosses
+// Petites requêtes sur un rectangle de carte (bien plus léger pour Overpass que "la commune de Toulouse",
+// qui lui fait recalculer la frontière à chaque fois) : Overpass répond souvent 504 (trop chargé) aux grosses.
+// Le rectangle couvre Toulouse et le bord des communes voisines (Blagnac, Balma, Ramonville…).
+const BBOX = { s: 43.532, w: 1.350, n: 43.669, e: 1.515, mid: 1.444 };
 const OSM_GROUPS = [
-  { name: 'restos', kinds: ['Resto'], q: 'nwr["amenity"="restaurant"]["name"](area.t);' },
-  { name: 'bars et cafés', kinds: ['Bar', 'Café'], q: 'nwr["amenity"~"^(bar|pub|cafe)$"]["name"](area.t);' },
+  { name: 'restos (ouest)', kinds: ['Resto'], box: [BBOX.s, BBOX.w, BBOX.n, BBOX.mid], q: 'nwr["amenity"="restaurant"]["name"];' },
+  { name: 'restos (est)', kinds: ['Resto'], box: [BBOX.s, BBOX.mid, BBOX.n, BBOX.e], q: 'nwr["amenity"="restaurant"]["name"];' },
+  { name: 'bars et cafés', kinds: ['Bar', 'Café'], q: 'nwr["amenity"~"^(bar|pub|cafe)$"]["name"];' },
   {
     name: 'activités et lieux', kinds: ['Activité', 'Lieu'],
-    q: 'nwr["leisure"~"^(escape_game|bowling_alley|trampoline_park|miniature_golf|amusement_arcade)$"]["name"](area.t);' +
-      'nwr["sport"="climbing"]["name"](area.t);nwr["tourism"~"^(museum|gallery|viewpoint)$"]["name"](area.t);' +
-      'nwr["tourism"="attraction"]["name"]["wikidata"](area.t);nwr["leisure"~"^(park|garden)$"]["name"]["wikidata"](area.t);',
+    q: 'nwr["leisure"~"^(escape_game|bowling_alley|trampoline_park|miniature_golf|amusement_arcade)$"]["name"];' +
+      'nwr["sport"="climbing"]["name"];nwr["tourism"~"^(museum|gallery|viewpoint)$"]["name"];' +
+      'nwr["tourism"="attraction"]["name"]["wikidata"];nwr["leisure"~"^(park|garden)$"]["name"]["wikidata"];',
   },
 ];
-const osmQuery = (body) => `[out:json][timeout:60];area["name"="Toulouse"]["admin_level"="8"]->.t;(${body});out center tags;`;
+const osmQuery = (g) => {
+  const [s, w, n, e] = g.box || [BBOX.s, BBOX.w, BBOX.n, BBOX.e];
+  return `[out:json][timeout:60][bbox:${s},${w},${n},${e}];(${g.q});out center tags;`;
+};
+let osmComplete = false; // vrai seulement si tous les groupes ont répondu (sinon on réessaie au prochain passage)
 
 const CUISINES = {
   french: 'française', pizza: 'pizza', asian: 'asiatique', japanese: 'japonaise', italian: 'italienne', regional: 'du Sud-Ouest',
@@ -474,9 +482,11 @@ function osmKind(t) {
 
 // Overpass est souvent chargé (erreur 504) : 3 serveurs publics, 2 tours, avec une pause entre les tours
 async function overpass(query) {
-  const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+  // serveur principal puis miroirs publics ; 2e tour (après une pause) sur les deux plus fiables
+  const endpoints = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
   let last;
-  for (const [i, endpoint] of [...endpoints, ...endpoints].entries()) {
+  for (const [i, endpoint] of [...endpoints, ...endpoints.slice(0, 2)].entries()) {
     if (i === endpoints.length) await sleep(20000);
     try {
       const r = await fetch(endpoint, {
@@ -497,17 +507,25 @@ async function overpass(query) {
 async function fetchOSM(previous) {
   const out = [];
   const failed = [];
+  const failedKinds = new Set();
   for (const g of OSM_GROUPS) {
     try {
-      for (const el of await overpass(osmQuery(g.q))) { const p = osmPlace(el); if (p) out.push(p); }
+      for (const el of await overpass(osmQuery(g))) { const p = osmPlace(el); if (p) out.push(p); }
     } catch (e) {
-      // ce groupe a échoué : on garde ceux de la veille pour ces types-là
-      const prev = (previous?.places || []).filter((p) => (p.sources || [])[0] === 'OpenStreetMap' && g.kinds.includes(p.kind));
-      prev.forEach((p) => out.push({ ...p, source: 'OpenStreetMap' }));
-      failed.push(`${g.name} : ${e.message}${prev.length ? ` (${prev.length} repris de la veille)` : ''}`);
+      g.kinds.forEach((k) => failedKinds.add(k));
+      failed.push(`${g.name} : ${e.message}`);
     }
     await sleep(3000);
   }
+  // types en échec : on garde ceux de la veille (pour ces types-là, en entier : pas de doublons ouest/est)
+  for (const k of failedKinds) {
+    const prev = (previous?.places || []).filter((p) => (p.sources || [])[0] === 'OpenStreetMap' && p.kind === k);
+    if (!prev.length) continue; // rien de la veille : on garde au moins la moitié récupérée
+    for (let i = out.length - 1; i >= 0; i--) if (out[i].kind === k) out.splice(i, 1);
+    prev.forEach((p) => out.push({ ...p, source: 'OpenStreetMap' }));
+    failed.push(`${prev.length} « ${k} » repris de la veille`);
+  }
+  osmComplete = failed.length === 0;
   if (failed.length) console.warn(`  OpenStreetMap incomplet — ${failed.join(' ; ')}`);
   if (!out.length) throw new Error(`Overpass indisponible — ${failed.join(' ; ')}`);
   return out;
@@ -539,40 +557,10 @@ function osmPlace(el) {
   }
 }
 
-const MICHELIN_URL = 'https://guide.michelin.com/fr/fr/occitanie/toulouse/restaurants';
-async function fetchMichelin() {
-  const html = await get(MICHELIN_URL);
-  const DIST = { '3 star': '3 étoiles', '2 star': '2 étoiles', '1 star': '1 étoile', bib: 'Bib Gourmand', '': 'Sélection' };
-  const out = [];
-  for (const c of html.split('js-restaurant__list_item js-match-height js-map ').slice(1)) {
-    const id = c.match(/data-id="(\d+)"/)?.[1];
-    const lat = c.match(/data-lat="([\d.-]+)"/)?.[1], lon = c.match(/data-lng="([\d.-]+)"/)?.[1];
-    const name = clean(c.match(/data-restaurant-name="([^"]*)"/)?.[1]);
-    if (!id || !name || !lat) continue;
-    const href = c.match(/href="(\/fr\/[^"]+\/restaurant\/[^"]+)"/)?.[1];
-    const content = c.slice(c.indexOf('card__menu-content'), c.indexOf('card__menu-content') + 4000).replace(/<[^>]+>/g, '|');
-    const m = content.match(/(€{1,4})\s*·\s*([^|]+)/);
-    out.push({
-      id: `mi-${id}`, name, kind: 'Resto',
-      detail: m ? clean(m[2]).toLowerCase().replace(/^cuisine /, '') : '',
-      price: m?.[1] || '',
-      michelin: DIST[c.match(/data-dtm-distinction="([^"]*)"/)?.[1] ?? ''] || 'Sélection',
-      address: '', city: 'Toulouse', lat: +lat, lon: +lon,
-      url: href ? `https://guide.michelin.com${href}` : MICHELIN_URL,
-      source: 'Guide Michelin',
-    });
-  }
-  if (!out.length) {
-    // pour comprendre ce que le site a renvoyé (ex. page anti-robots : on ne la contourne pas, on garde la veille)
-    const guard = /captcha|challenge|access denied|are you a robot|cf-chl|datadome|perimeterx/i.test(html) ? ', page anti-robots' : '';
-    throw new Error(`page sans fiches resto (${Math.round(html.length / 1024)} Ko${guard})`);
-  }
-  return out;
-}
-
+// (Le Guide Michelin a été essayé : il renvoie une page anti-robots aux serveurs de GitHub. On ne la contourne
+// pas, donc il n'est pas dans les sources. Le lien 📍 de chaque fiche ouvre Google Maps et ses avis.)
 const PLACE_SOURCES = [
   { name: 'OpenStreetMap', site: 'https://www.openstreetmap.org/#map=13/43.6045/1.4440', run: fetchOSM },
-  { name: 'Guide Michelin', site: MICHELIN_URL, run: fetchMichelin },
 ];
 
 const metres = (a, b) => {
@@ -727,7 +715,7 @@ async function main() {
       ps.forEach((p) => placeList.push(p));
       report.push({ name: s.name, site: s.site, ok: true, count: ps.length, places: true });
       console.log(`✓ ${s.name} : ${ps.length} lieux`);
-      if (s.name === 'OpenStreetMap') placesAt = new Date().toISOString();
+      if (s.name === 'OpenStreetMap' && osmComplete) placesAt = new Date().toISOString();
     } catch (err) {
       const kept = (previous.places || []).filter((p) => (p.sources || [])[0] === s.name).map((p) => ({ ...p, source: s.name }));
       kept.forEach((p) => placeList.push(p));

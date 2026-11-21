@@ -50,6 +50,8 @@ jobs:
             echo "Pas de changement."
           else
             git commit -m "data: sorties du $(date -u +%F)"
+            # si du code a été poussé pendant ce passage, on se remet par-dessus avant d'envoyer
+            git pull --rebase -q origin main
             git push
           fi
 

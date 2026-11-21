@@ -655,7 +655,7 @@ function renderStatic() {
   }
   $('#foot').innerHTML = `<strong>Sources</strong> — récupérées automatiquement chaque matin. Vérifie toujours les infos sur le site de l'organisateur avant de te déplacer.
     <ul>${(DATA.sources || []).map((s) => `<li class="${s.ok ? '' : 'ko'}">${s.ok ? '✓' : '⚠'} <a href="${esc(safeUrl(s.site) || '#')}" target="_blank" rel="noopener">${esc(s.name)}</a> (${s.count})${s.ok ? '' : ' — en panne, données de la veille'}</li>`).join('')}</ul>
-    <p>Lieux &amp; restos : données <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© les contributeurs OpenStreetMap</a> (ODbL) et sélection du <a href="https://guide.michelin.com/fr/fr/occitanie/toulouse/restaurants" target="_blank" rel="noopener">Guide Michelin</a>. Pas d'avis clients : la note vient des règles expliquées sous chaque fiche.</p>
+    <p>Lieux &amp; restos : données <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© les contributeurs OpenStreetMap</a> (ODbL). Pas d'avis clients : la note vient des règles expliquées sous chaque fiche ; le 📍 ouvre le lieu dans Google Maps avec ses avis.</p>
     ${ENCRYPTED ? '<p><button class="link" id="logout" type="button">Se déconnecter de cet appareil</button></p>' : ''}`;
   $('#logout')?.addEventListener('click', () => { forgetKey(); location.reload(); });
 }
