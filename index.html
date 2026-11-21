@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sorties Toulouse</title>
+  <meta name="description" content="Tout ce qui se passe à Toulouse au même endroit : concerts, spectacles, expos, ateliers, bons plans du week-end. Mis à jour chaque jour.">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#faf6f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161211" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c4513f'/%3E%3Cpath d='M9 22V12l7-4 7 4v10h-4v-6h-6v6z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="lock" id="lock" hidden>
+    <form class="lock__card" id="lockForm">
+      <svg class="lock__icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      <h1>Sorties <span>Toulouse</span></h1>
+      <p>Site privé. Entre le mot de passe pour ouvrir le programme.</p>
+      <input type="text" name="username" value="sorties-toulouse" autocomplete="username" hidden>
+      <input type="password" id="pw" name="password" autocomplete="current-password" placeholder="Mot de passe" aria-label="Mot de passe" required>
+      <label class="lock__remember"><input type="checkbox" id="remember" checked> Rester connecté sur cet appareil</label>
+      <button type="submit" id="unlockBtn">Ouvrir</button>
+      <p class="lock__err" id="lockErr" role="alert"></p>
+    </form>
+  </div>
+
+  <header class="top">
+    <div class="top__inner">
+      <div class="brand">
+        <h1>Sorties <span>Toulouse</span></h1>
+        <p class="brand__sub" id="updated">Chargement…</p>
+      </div>
+      <label class="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="Zénith, jazz, Capitole, gratuit…" autocomplete="off" aria-label="Rechercher">
+      </label>
+    </div>
+    <nav class="when" id="when" aria-label="Période">
+      <button data-when="today">Aujourd'hui</button>
+      <button data-when="tomorrow">Demain</button>
+      <button data-when="weekend">Ce week-end</button>
+      <button data-when="7days">7 jours</button>
+      <button data-when="nextweek">Semaine pro</button>
+      <button data-when="30days">30 jours</button>
+      <button data-when="all">Tout</button>
+      <button data-when="custom">Dates…</button>
+    </nav>
+    <div class="custom" id="custom" hidden>
+      <label>Du <input type="date" id="from"></label>
+      <label>au <input type="date" id="to"></label>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="filters" id="filters" aria-label="Filtres">
+      <div class="filters__head">
+        <h2>Filtres</h2>
+        <button class="link" id="reset" type="button">Tout effacer</button>
+      </div>
+
+      <section>
+        <h3>Type de sortie</h3>
+        <div class="chips" id="cats"></div>
+      </section>
+
+      <section>
+        <details class="tastes">
+          <summary>Mes goûts <span>règlent la Sélection</span></summary>
+          <p class="tastes__help">♥ = j'adore (remonte) · – = neutre · ✕ = pas pour moi (retiré de la Sélection). Les ⭐ et 👎 que tu mets sur les sorties ajustent aussi le tri.</p>
+          <div id="tastes"></div>
+          <button class="link" id="unhide" type="button" hidden></button>
+          <button class="link" id="resetTastes" type="button">Remettre les goûts par défaut</button>
+        </details>
+      </section>
+
+      <section>
+        <h3>Moment</h3>
+        <div class="seg" id="moment">
+          <button data-m="">Tous</button>
+          <button data-m="day">Journée</button>
+          <button data-m="evening">Le soir</button>
+        </div>
+      </section>
+
+      <section class="toggles">
+        <label><input type="checkbox" id="free"> Gratuit seulement</label>
+        <label><input type="checkbox" id="kids"> Pour les enfants</label>
+        <label><input type="checkbox" id="favs"> Mes favoris</label>
+        <label><input type="checkbox" id="hideFull"> Masquer les « complet »</label>
+      </section>
+
+      <section>
+        <h3>Ville</h3>
+        <select id="city" aria-label="Ville"></select>
+      </section>
+
+      <section>
+        <h3>Sources</h3>
+        <div class="chips" id="sources"></div>
+      </section>
+      <button class="apply" id="apply" type="button">Voir les résultats</button>
+    </aside>
+
+    <main>
+      <div class="bar">
+        <button class="filters-btn" id="filtersBtn" type="button" aria-expanded="false" aria-controls="filters">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+          Filtres <span class="badge" id="activeCount" hidden></span>
+        </button>
+        <div class="seg pick" id="pick" aria-label="Pré-filtre">
+          <button data-pick="best" title="Seulement ce qui vaut le coup, selon tes goûts">Sélection</button>
+          <button data-pick="all" title="Toutes les sorties, sans pré-filtre">Tout</button>
+        </div>
+        <div class="tabs" role="tablist">
+          <button role="tab" data-tab="events" id="tabEvents">Au programme</button>
+          <button role="tab" data-tab="ongoing" id="tabOngoing">En continu</button>
+        </div>
+      </div>
+      <p class="summary" id="summary" aria-live="polite"></p>
+      <div id="list" class="list"></div>
+      <button id="more" class="more" type="button" hidden>Voir plus</button>
+    </main>
+  </div>
+
+  <footer class="foot" id="foot"></footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

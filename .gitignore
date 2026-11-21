@@ -1,0 +1,8 @@
+node_modules/
+.claude/settings.local.json
+.DS_Store
+Thumbs.db
+
+# La liste en clair ne doit JAMAIS partir sur GitHub (le dépôt est public) :
+# seule data/events.enc.json (chiffrée) est publiée.
+data/events.json

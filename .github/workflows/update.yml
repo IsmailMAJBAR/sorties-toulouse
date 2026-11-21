@@ -1,0 +1,63 @@
+name: Mise à jour des sorties
+
+on:
+  schedule:
+    - cron: '30 4 * * *'   # tous les jours à 4h30 UTC (5h30 / 6h30 à Toulouse)
+  workflow_dispatch:        # bouton "Run workflow" dans l'onglet Actions
+  push:
+    branches: [main]
+    paths-ignore: ['data/**', 'README.md']
+
+permissions:
+  contents: write   # pour enregistrer data/events.json
+  pages: write      # pour publier le site
+  id-token: write
+
+concurrency:
+  group: sorties
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Récupérer et chiffrer les événements
+        run: node scripts/fetch-events.mjs
+        env:
+          SITE_KEY: ${{ secrets.SITE_KEY }}
+          TICKETMASTER_KEY: ${{ secrets.TICKETMASTER_KEY }}
+
+      - name: Vérifier que rien n'est publié en clair
+        run: |
+          test ! -e data/events.json || { echo "data/events.json en clair présent : arrêt."; exit 1; }
+          grep -q '"iv"' data/events.enc.json
+
+      - name: Enregistrer data/events.enc.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/events.enc.json
+          if git diff --cached --quiet; then
+            echo "Pas de changement."
+          else
+            git commit -m "data: sorties du $(date -u +%F)"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

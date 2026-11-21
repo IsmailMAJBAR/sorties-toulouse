@@ -1,0 +1,5 @@
+{
+  "salt": "2+9DZNVuL9Py/TnOmy8CIw==",
+  "iterations": 600000,
+  "note": "Sel public (ce n est pas un secret). Le mot de passe ne quitte jamais ton PC : voir scripts/mot-de-passe.mjs"
+}
