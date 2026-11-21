@@ -256,6 +256,7 @@ select { width: 100%; background: var(--bg); border: 1px solid var(--line); bord
 .card__kind { font-size: 22px; line-height: 1; }
 .tag--michelin { background: color-mix(in srgb, #c8102e 14%, transparent); color: #b0102a; }
 :root[data-theme="dark"] .tag--michelin { color: #ff7b8c; }
+.tag--rating { background: color-mix(in srgb, #f5b301 18%, transparent); color: var(--ink); }
 .card[data-kind="Resto"] { --c: var(--c-spectacle); }
 .card[data-kind="Bar"] { --c: var(--c-soiree); }
 .card[data-kind="Café"] { --c: var(--c-marche); }

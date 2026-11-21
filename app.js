@@ -411,7 +411,18 @@ function placeScore(p) {
   if (p.michelin) add(MICHELIN_PTS[p.michelin] || 2.5, `Guide Michelin : ${p.michelin}${p.michelin === 'Bib Gourmand' ? ' (très bon rapport qualité-prix)' : ''}`);
   const rare = (p.cuisineRaw || '').split(';').map((x) => x.trim()).find((c) => c && !COMMON_CUISINE.test(c));
   if (p.kind === 'Resto' && rare) add(2, `Cuisine à découvrir : ${p.detail}`);
-  if (p.kind === 'Activité') add(2.5, `Activité à tester : ${p.detail}`);
+  if (p.kind === 'Activité') {
+    if (/détente|billet/.test(p.detail || '')) add(-1.5, p.detail === 'détente' ? 'Plutôt détente que découverte' : "Billet d'entrée, pas une activité à apprendre");
+    else add(2.5, `Activité à tester : ${p.detail}`);
+    if (/atelier|cours|stage/.test(p.detail || '') || DISCOVERY.test(fold(p.name))) add(1.5, "Pour apprendre / s'initier");
+  }
+  if (p.fbRating) {
+    const v = p.fbRating, n = p.fbReviews || 0;
+    const lbl = `${v.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}/5 sur ${n} avis Funbooker`;
+    if (v >= 4.7 && n >= 20) add(1.5, `Très bien noté : ${lbl}`);
+    else if (v >= 4.5 && n >= 5) add(1, `Bien noté : ${lbl}`);
+    else if (v < 4) add(-1.5, `Moyennement noté : ${lbl}`);
+  }
   if (p.kind === 'Lieu' && p.notable) add(1, 'Lieu connu (fiche Wikipédia)');
   if (p.kind === 'Bar' && /cocktails|brasserie artisanale/.test(p.detail || '')) add(1, `Bar : ${p.detail}`);
   add(p.url ? 0.5 : -0.5, p.url ? 'A un site web' : 'Pas de site web');
@@ -450,6 +461,8 @@ function placeCard(p, sc, why, near = '') {
     p.michelin ? `<span class="tag tag--michelin">Michelin · ${esc(p.michelin)}</span>` : '',
     p.terrace ? '<span class="tag">Terrasse</span>' : '',
     p.veg ? '<span class="tag">Végé</span>' : '',
+    p.fbRating ? `<span class="tag tag--rating">★ ${esc(p.fbRating.toLocaleString('fr-FR', { maximumFractionDigits: 1 }))} · ${esc(p.fbReviews)} avis</span>` : '',
+    p.sources.includes('Funbooker') ? `<a class="tag tag--src" href="${esc(safeUrl(p.url) || '#')}" target="_blank" rel="noopener">Réserver sur Funbooker</a>` : '',
     isTested ? '<span class="tag tag--free">Testé ✓</span>' : '',
     p.michelinUrl && p.url ? `<a class="tag tag--src" href="${esc(p.michelinUrl)}" target="_blank" rel="noopener">fiche Michelin</a>` : '',
   ].join('');
@@ -459,7 +472,9 @@ function placeCard(p, sc, why, near = '') {
       <h3>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)}</h3>
       ${info ? `<p class="card__meta">${esc(info[0].toUpperCase() + info.slice(1))}</p>` : ''}
       <p class="card__meta"><a class="maplink" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps">${ICON.pin}<span>${esc(p.address || 'Voir sur la carte')}${near ? ` · ${esc(near)}` : ''}</span></a></p>
+      ${p.desc ? `<p class="card__desc">${esc(p.desc)}</p>` : ''}
     </div>
+    ${safeUrl(p.image) ? `<img class="card__thumb" src="${esc(p.image)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
     <div class="card__foot">
       <div class="tags">${tags}</div>
       <div class="actions">
@@ -913,7 +928,7 @@ async function start() {
   PLACES = (DATA.places || []).map((p) => ({ ...p, sources: p.sources || [] }));
   for (const p of PLACES) {
     p._fname = fold(p.name);
-    p._text = fold([p.name, p.kind, KIND[p.kind]?.label, p.detail, p.address, p.city, p.michelin ? 'michelin ' + p.michelin : '', p.terrace ? 'terrasse' : '', p.veg ? 'vegetarien vege' : ''].join(' '));
+    p._text = fold([p.name, p.kind, KIND[p.kind]?.label, p.detail, p.desc, p.address, p.city, p.michelin ? 'michelin ' + p.michelin : '', p.terrace ? 'terrasse' : '', p.veg ? 'vegetarien vege' : '', p.sources.join(' ')].join(' '));
   }
   for (const e of EVENTS) {
     e._text = fold([e.title, e.venue, e.city, e.category, e.desc, e.address, e.free ? 'gratuit' : '', e.sources.join(' ')].join(' '));

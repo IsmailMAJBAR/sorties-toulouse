@@ -49,7 +49,14 @@ carte. Le Guide Michelin a été essayé mais il bloque les serveurs de GitHub (
 Pas d'avis clients : la note /10 vient de règles visibles sous chaque fiche (`placeScore` dans `app.js`) —
 cuisine à découvrir (+2), activité à tester (+2,5), lieu connu (+1), site web, terrasse,
 végé ; chaîne (−3) ; et tes ⭐ / 👎. Le bouton **✓ Testé** range un lieu dans « déjà testés ».
-Les lieux sont rechargés **une fois par semaine** (ils changent peu ; `FORCE_PLACES=1` pour forcer).
+**Funbooker** ajoute ≈ 80 activités à réserver à Toulouse (ateliers, cours, initiations, escape games, vols
+en ULM…) avec prix de départ, note des clients, adresse et photo, lues sur la page publique Toulouse et les
+fiches (les pages suivantes `?page=` sont interdites aux robots : seule la première est lue). Bonus : « pour
+apprendre / s'initier » (+1,5), très bien noté par les clients (+1 à +1,5) ; massages et billets d'entrée
+passent derrière (−1,5).
+
+Les lieux sont rechargés **une fois par semaine**, source par source (`FORCE_PLACES=1` pour tout forcer,
+`FORCE_PLACES=Funbooker` pour une seule source).
 Pas de note Google intégrée : le lien 📍 de chaque fiche ouvre le lieu dans Google Maps, avec ses avis.
 
 ## Mon programme

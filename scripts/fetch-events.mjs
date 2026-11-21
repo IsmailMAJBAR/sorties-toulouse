@@ -67,14 +67,22 @@ async function get(url, { json = false, tries = 3 } = {}) {
   throw last;
 }
 
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', rsquo: '’', lsquo: '‘', hellip: '…', eacute: 'é', egrave: 'è', agrave: 'à', ccedil: 'ç' };
+const ENTITIES = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“', hellip: '…',
+  laquo: '«', raquo: '»', euro: '€', deg: '°', ndash: '–', mdash: '—', oelig: 'œ', OElig: 'Œ', aelig: 'æ', AElig: 'Æ',
+  szlig: 'ß', middot: '·', bull: '•', times: '×', eth: 'ð', copy: '©', reg: '®', trade: '™', shy: '',
+};
+// lettres accentuées : &eacute; &ocirc; &Agrave; &ccedil; &iuml; … -> lettre + accent combinant
+const ACCENTS = { acute: '́', grave: '̀', circ: '̂', uml: '̈', tilde: '̃', cedil: '̧', ring: '̊' };
 function clean(s, max = 0) {
   if (!s) return '';
   let t = String(s)
     .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;(?=[a-z#])/gi, '&')
     .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n))
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
-    .replace(/&([a-z]+);/gi, (m, n) => ENTITIES[n.toLowerCase()] ?? m)
+    .replace(/&([a-zA-Z])(acute|grave|circ|uml|tilde|cedil|ring);/g, (_, l, k) => (l + ACCENTS[k]).normalize('NFC'))
+    .replace(/&([a-z]+);/gi, (m, n) => ENTITIES[n] ?? ENTITIES[n.toLowerCase()] ?? m)
     .replace(/[*_#]{1,3}/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -554,10 +562,69 @@ function osmPlace(el) {
   }
 }
 
+// ---------- Funbooker : activités à réserver (ateliers, cours, initiations, escape games, vols…) ----------
+// Page publique « Toulouse » + une fiche par activité (prix de départ, note des clients, adresse, position).
+// Les pages suivantes (?page=) sont interdites aux robots : on ne lit que la première page.
+
+const FUNBOOKER = 'https://www.funbooker.com/fr/place/toulouse';
+const FB_DETAIL = [
+  [/escape-game/, 'escape game'], [/^atelier|diy/, 'atelier'], [/^cours|initiation|oenologie/, 'cours / initiation'],
+  [/^stage/, 'stage'], [/^vol-|parachute|ulm|helicoptere|simulateur/, 'sensations'],
+  [/massage|spa|kobido|soin/, 'détente'], [/^billet|pass-tourisme|musee/, 'billet'],
+  [/visite|city-tour|croisiere|food-tour|jeu-de-piste|bateau/, 'visite / balade'],
+  [/quiz|karaoke|realite-virtuelle|bomb-squad|jeu-daventure|bubble-foot|trampoline|mini-golf|accrobranche|archery/, 'jeu / sport fun'],
+];
+const fbDetail = (slug) => FB_DETAIL.find(([re]) => re.test(slug))?.[1] || 'activité';
+
+async function fetchFunbooker() {
+  const html = await get(FUNBOOKER);
+  const links = [...new Set([...html.matchAll(/href="(\/fr\/annonce\/[^"?#]+)"/g)].map((m) => m[1]))];
+  if (!links.length) throw new Error('page Toulouse sans activités');
+  const out = [];
+  for (const href of links.slice(0, 120)) {
+    await sleep(900);
+    let page;
+    try { page = await get('https://www.funbooker.com' + href); } catch { continue; }
+    let prod = null;
+    for (const m of page.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/g)) {
+      try { const d = JSON.parse(m[1]); for (const x of d['@graph'] || [].concat(d)) if (x && x['@type'] === 'Product' && !prod) prod = x; } catch { /* bloc illisible */ }
+    }
+    if (!prod) continue;
+    const slug = href.split('/')[3] || href;
+    const lat = parseFloat(page.match(/lat:\s*(-?\d+\.\d+)/)?.[1]);
+    const lon = parseFloat(page.match(/lng:\s*(-?\d+\.\d+)/)?.[1]);
+    const address = clean(page.replace(/<[^>]+>/g, ' | ')).match(/Adresse\s*:\s*([^|]{5,140}?)\s*\|/)?.[1]?.trim() || '';
+    const city = address.match(/\b\d{5}\s+([^,|]+)$/)?.[1]?.trim() || 'Toulouse';
+    const offer = [].concat(prod.offers || [])[0] || {};
+    const low = offer.lowPrice ?? offer.price;
+    // une activité sans avis propres affiche la note globale de Funbooker (> 100 000 avis) : on l'ignore
+    const rating = prod.aggregateRating && +prod.aggregateRating.reviewCount < 10000 ? prod.aggregateRating : {};
+    const image = ldImage(prod) || page.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/)?.[1] || null;
+    out.push({
+      id: `fb-${slug}`,
+      // "Atelier céramique à Toulouse (31)" -> "Atelier céramique"
+      name: clean(prod.name).replace(/\s*\(\d{2,3}\)\s*$/, '').replace(/\s+(?:à|a|en|au|depuis|proche de|près de)\s+\S+\s*$/i, '').trim(),
+      kind: 'Activité', detail: fbDetail(slug),
+      desc: clean(prod.description, 220),
+      address, city,
+      lat: Number.isFinite(lat) ? lat : null, lon: Number.isFinite(lon) ? lon : null,
+      url: 'https://www.funbooker.com' + href,
+      price: low != null && low !== '' ? `dès ${String(low).replace('.', ',')} €` : '',
+      fbRating: rating.ratingValue ? Math.round(rating.ratingValue * 100) / 100 : null,
+      fbReviews: rating.reviewCount ? +rating.reviewCount : 0,
+      image: typeof image === 'string' ? image : null,
+      source: 'Funbooker',
+    });
+  }
+  if (!out.length) throw new Error('aucune fiche activité lisible');
+  return out;
+}
+
 // (Le Guide Michelin a été essayé : il renvoie une page anti-robots aux serveurs de GitHub. On ne la contourne
 // pas, donc il n'est pas dans les sources. Le lien 📍 de chaque fiche ouvre Google Maps et ses avis.)
 const PLACE_SOURCES = [
-  { name: 'OpenStreetMap', site: 'https://www.openstreetmap.org/#map=13/43.6045/1.4440', run: fetchOSM },
+  { name: 'OpenStreetMap', site: 'https://www.openstreetmap.org/#map=13/43.6045/1.4440', run: fetchOSM, complete: () => osmComplete },
+  { name: 'Funbooker', site: FUNBOOKER, run: fetchFunbooker, complete: () => true },
 ];
 
 const metres = (a, b) => {
@@ -569,7 +636,7 @@ const metres = (a, b) => {
 // Un resto Michelin qui est aussi sur OpenStreetMap : une seule fiche, enrichie.
 function mergePlaces(list) {
   const osm = list.filter((p) => p.source === 'OpenStreetMap');
-  const out = [...osm];
+  const out = list.filter((p) => p.source !== 'Guide Michelin'); // OpenStreetMap, Funbooker…
   for (const m of list.filter((p) => p.source === 'Guide Michelin')) {
     const k = fold(m.name).replace(/[^a-z0-9]/g, '');
     const twin = osm.find((o) => o.kind === 'Resto' && metres(o, m) < 150 && (() => {
@@ -693,26 +760,29 @@ async function main() {
 
   // lieux & restos (sans date) : ils changent peu -> rechargés une fois par semaine seulement
   // (moins de charge pour OpenStreetMap, moins de risques d'échec), même principe de secours sinon
-  const placesAge = previous.placesAt ? (Date.now() - Date.parse(previous.placesAt)) / 864e5 : Infinity;
-  const reusePlaces = placesAge < 7 && (previous.places || []).length > 100 && !process.env.FORCE_PLACES;
-  let placesAt = previous.placesAt || null;
+  // date du dernier chargement complet, par source (ancien format : une seule date = OpenStreetMap)
+  const prevAt = typeof previous.placesAt === 'string' ? { OpenStreetMap: previous.placesAt } : (previous.placesAt || {});
+  const placesAt = { ...prevAt };
   const placeList = [];
-  if (reusePlaces) {
-    for (const p of previous.places) placeList.push({ ...p, source: (p.sources || [])[0] });
-    for (const s of PLACE_SOURCES) {
+  for (const s of PLACE_SOURCES) {
+    const mine = (previous.places || []).filter((p) => (p.sources || [])[0] === s.name);
+    const age = prevAt[s.name] ? (Date.now() - Date.parse(prevAt[s.name])) / 864e5 : Infinity;
+    // FORCE_PLACES=1 recharge tout ; FORCE_PLACES=Funbooker ne recharge que cette source
+    const forced = process.env.FORCE_PLACES && (process.env.FORCE_PLACES === '1' || process.env.FORCE_PLACES.split(',').includes(s.name));
+    if (age < 7 && mine.length && !forced) {
+      mine.forEach((p) => placeList.push({ ...p, source: s.name }));
       const old = (previous.sources || []).find((x) => x.name === s.name);
-      report.push({ ...(old || { name: s.name, site: s.site, ok: true, count: 0 }), places: true });
+      report.push({ ...(old || { name: s.name, site: s.site, ok: true }), count: mine.length, places: true });
+      console.log(`· ${s.name} : ${mine.length} lieux du ${prevAt[s.name].slice(0, 10)} (rechargés chaque semaine)`);
+      continue;
     }
-    console.log(`· Lieux : ceux du ${previous.placesAt.slice(0, 10)} (rechargés chaque semaine)`);
-  }
-  for (const s of reusePlaces ? [] : PLACE_SOURCES) {
     try {
       const ps = await s.run(previous);
       if (!ps.length) throw new Error('0 lieu récupéré');
       ps.forEach((p) => placeList.push(p));
       report.push({ name: s.name, site: s.site, ok: true, count: ps.length, places: true });
       console.log(`✓ ${s.name} : ${ps.length} lieux`);
-      if (s.name === 'OpenStreetMap' && osmComplete) placesAt = new Date().toISOString();
+      if (s.complete()) placesAt[s.name] = new Date().toISOString();
     } catch (err) {
       const kept = (previous.places || []).filter((p) => (p.sources || [])[0] === s.name).map((p) => ({ ...p, source: s.name }));
       kept.forEach((p) => placeList.push(p));
