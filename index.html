@@ -50,6 +50,7 @@
       <button data-when="today">Aujourd'hui</button>
       <button data-when="tomorrow">Demain</button>
       <button data-when="weekend">Ce week-end</button>
+      <button data-when="nextweekend">Week-end pro</button>
       <button data-when="7days">7 jours</button>
       <button data-when="nextweek">Semaine pro</button>
       <button data-when="30days">30 jours</button>
@@ -94,6 +95,7 @@
       </section>
 
       <section class="toggles">
+        <label><input type="checkbox" id="try"> À essayer : initiations, ateliers, découvertes</label>
         <label><input type="checkbox" id="free"> Gratuit seulement</label>
         <label><input type="checkbox" id="kids"> Pour les enfants</label>
         <label><input type="checkbox" id="favs"> Mes favoris</label>
@@ -125,6 +127,7 @@
         <div class="tabs" role="tablist">
           <button role="tab" data-tab="events" id="tabEvents">Au programme</button>
           <button role="tab" data-tab="ongoing" id="tabOngoing">En continu</button>
+          <button role="tab" data-tab="plan" id="tabPlan">Mon programme</button>
         </div>
       </div>
       <p class="summary" id="summary" aria-live="polite"></p>

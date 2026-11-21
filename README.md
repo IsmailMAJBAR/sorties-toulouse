@@ -21,11 +21,16 @@ ses événements de la veille sont gardés (et le pied de page l'indique).
 Pas branchés : **Frimake** (rien n'est public, tout est dans l'appli avec un compte), **Fever**
 (pas de données publiques), **Shotgun** et **Songkick** (bloquent les scripts).
 
-## Le mode « Sélection » (pré-filtre)
+## Le mode « Sélection » (pré-filtre) et la note /10
 
-Activé par défaut, pour ne pas se noyer. Chaque sortie reçoit une note (fonction `score` dans `app.js`) :
+Activé par défaut, pour ne pas se noyer. Chaque sortie a une **note sur 10** (5 + bonus/malus, fonction
+`score` dans `app.js`) ; un clic sur la note affiche le détail ligne par ligne :
 
-- **tes goûts par type** (♥ +2,5 · – 0 · ✕ −4), réglables dans le panneau « Mes goûts » ;
+- **tes goûts par type** (♥ +2,5 · – 0 · ✕ −4), réglables dans le panneau « Mes goûts » (par défaut :
+  ateliers, concerts, spectacles, humour, festivals en ♥) ;
+- **+2,5 « À essayer »** si le titre parle d'initiation, découverte, masterclass, dégustation, escape game,
+  poterie, escalade… (`DISCOVERY`), +1 si c'est seulement dans la description ; le filtre
+  « À essayer » ne garde que celles-là ;
 - **+2** si l'événement est annoncé sur plusieurs sites, **+1,5** pour les lieux qui valent le coup (`TOP_VENUES`) ;
 - **−5** pour les mots qui sentent le « pas ouf » (`BORING` : réunion publique, permanence, atelier numérique, tout-petits…) ;
 - petits bonus/malus : image et description (fiche soignée), gratuit, hors Toulouse, pour enfants ;
@@ -34,6 +39,14 @@ Activé par défaut, pour ne pas se noyer. Chaque sortie reçoit une note (fonct
 Ensuite on garde ce qui dépasse `THRESHOLD`, et au plus `PER_DAY` sorties par jour (les mieux notées ;
 le reste est derrière « + N autres »). Une recherche, une catégorie cochée ou « Mes favoris » passent outre.
 Le bouton **Tout** affiche tout, sans pré-filtre. Goûts, 👎 et favoris restent dans le navigateur (localStorage).
+
+## Mon programme
+
+Onglet qui compose une journée pour la période choisie (aujourd'hui, ce week-end, **Week-end pro**, ou un jour
+précis avec « Dates… » ; 4 jours max) : pour chaque jour, la sortie la mieux notée du **matin**, de
+l'**après-midi** et du **soir**, sans doublon, avec 2 autres idées. S'il n'y a rien à heure fixe le matin ou
+l'après-midi, il propose une expo / activité en continu ouverte ce jour-là. 🎲 « Proposer autre chose » tire
+d'autres choix parmi les mieux notées ; 📅 « Tout ajouter à mon agenda » télécharge le programme en .ics.
 
 ## Comment ça marche
 

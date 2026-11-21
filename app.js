@@ -26,7 +26,7 @@ const fmtStamp = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numer
 
 const CAT_ORDER = ['Concert', 'Soirée', 'Rencontre', 'Spectacle', 'Humour', 'Expo', 'Cinéma', 'Festival', 'Atelier', 'Conférence', 'Visite', 'Sport', 'Marché', 'Autre'];
 const CAT_VAR = { Concert: 'concert', Soirée: 'soiree', Rencontre: 'rencontre', Spectacle: 'spectacle', Humour: 'humour', Expo: 'expo', Cinéma: 'cinema', Festival: 'festival', Atelier: 'atelier', Conférence: 'conference', Visite: 'visite', Sport: 'sport', Marché: 'marche', Autre: 'autre' };
-const WHEN_LABEL = { today: "Aujourd'hui", tomorrow: 'Demain', weekend: 'Ce week-end', '7days': '7 prochains jours', nextweek: 'Semaine prochaine', '30days': '30 prochains jours', all: 'Tout', custom: 'Dates choisies' };
+const WHEN_LABEL = { today: "Aujourd'hui", tomorrow: 'Demain', weekend: 'Ce week-end', nextweekend: 'Week-end prochain', '7days': '7 prochains jours', nextweek: 'Semaine prochaine', '30days': '30 prochains jours', all: 'Tout', custom: 'Dates choisies' };
 const PAGE = 80;
 
 const ICON = {
@@ -41,13 +41,18 @@ const ICON = {
 // et au maximum PER_DAY par jour (les mieux notées). Tout est réglable ici et dans "Mes goûts".
 
 const TASTE_VAL = { love: 2.5, ok: 0, nope: -4 };
+// Par défaut : ce qui fait tester, apprendre, découvrir passe devant (ateliers, initiations, expériences).
 const DEFAULT_TASTES = {
   Concert: 'love', Soirée: 'ok', Rencontre: 'ok', Spectacle: 'love', Humour: 'love', Expo: 'ok', Cinéma: 'ok',
-  Festival: 'love', Atelier: 'ok', Conférence: 'nope', Visite: 'ok', Sport: 'ok', Marché: 'ok', Autre: 'ok',
+  Festival: 'love', Atelier: 'love', Conférence: 'ok', Visite: 'ok', Sport: 'ok', Marché: 'ok', Autre: 'ok',
 };
-const THRESHOLD = 1;    // note minimale pour être dans la Sélection
+// La note affichée est sur 10 : 5 + la somme des bonus/malus (bornée entre 0 et 10).
+const BASE = 5;
+const THRESHOLD = 1;    // Sélection : note ≥ 6/10
 const PER_DAY = 8;      // sorties max par jour dans la Sélection
-const TOP = 4;          // note à partir de laquelle on affiche le badge "Top"
+const TOP = 4;          // badge "Top" : note ≥ 9/10
+// "À essayer" : tester un truc nouveau, apprendre, s'initier, vivre une expérience
+const DISCOVERY = /\b(initiations?|s'initier|decouverte|premiers? pas|premier cours|cours d'essai|seance d'essai|essai gratuit|bapteme|apprendre|apprentissage|workshop|masterclass|demonstration|degustation|oenologie|escape game|immersi(ve|f)|realite virtuelle|fabriquer|fabrique ton|fabrication|diy|poterie|ceramique|modelage|cours de cuisine|patisserie|brassage|escalade|parapente|plongee|kayak|paddle|tir a l'arc|cours de danse|salsa|bachata|swing|tango|impro|sculpture|calligraphie|couture|tricot|reliure|vitrail|forge|menuiserie|jardinage|permaculture|astronomie|planetarium|observation des etoiles|sortie nature|balade (botanique|naturaliste|photo)|jeu de piste|chasse au tresor)\b/;
 // Mots qui trahissent une sortie "pas ouf" (administratif, très spécialisé, pour les tout-petits…)
 const BORING = /\b(reunions? publiques?|conseil de quartier|concertation|permanences?|assemblee generale|formations?|aide (aux|a la|administrative)|demarches|numerique|informatique|ordinateur|cv|emploi|job ?dating|recrutement|aidants?|seniors?|bebes?|tout[- ]petits|heure du conte|bebe lecteur|webinaire|don du sang|collecte|whatsapp|vaccination|depistage|prevention|parentalite|soutien scolaire|aide aux devoirs|accompagnement)\b/;
 // Lieux qui valent souvent le déplacement : petit bonus
@@ -57,8 +62,10 @@ const TOP_VENUES = /zenith|bikini|metronum|capitole|halle aux grains|garonne|sor
 
 const state = {
   when: 'weekend', from: '', to: '', q: '', cats: new Set(), sources: new Set(),
-  city: '', moment: '', free: false, kids: false, favs: false, hideFull: false, tab: 'events', pick: 'best',
+  city: '', moment: '', free: false, kids: false, favs: false, hideFull: false, try: false, tab: 'events', pick: 'best',
 };
+const TOGGLES = ['try', 'free', 'kids', 'favs', 'hideFull'];
+let planSeed = 0, lastPlan = [];
 let favs = new Set(store.get('sorties-favs', []));
 let hidden = new Set(store.get('sorties-masques', []));
 let tastes = { ...DEFAULT_TASTES, ...store.get('sorties-gouts', {}) };
@@ -74,20 +81,32 @@ function learn(e, delta) {
   store.set('sorties-appris', learned);
 }
 
+// Renvoie la note (en points autour de 0) ET la liste des raisons, affichée sous chaque sortie.
 function score(e) {
-  let s = TASTE_VAL[tastes[e.category] || 'ok'];
-  if (e.sources.length > 1) s += 2;                 // annoncé sur plusieurs sites = événement qui compte
-  if (TOP_VENUES.test(fold(e.venue))) s += 1.5;
-  if (BORING.test(e._text)) s -= 5;
-  if (e.kids && !state.kids) s -= 1.5;               // pensé pour les enfants
-  s += e.image ? 0.3 : -0.7;                         // une fiche sans image ni texte est rarement soignée
-  if ((e.desc || '').length > 60) s += 0.3;
-  if (e.free) s += 0.5;
-  if (e.city && e.city !== 'Toulouse') s -= 0.7;
-  if (e.full) s -= 0.5;
-  s += 0.6 * (learned.cat[e.category] || 0) + 1 * (learned.venue[fold(e.venue)] || 0);
-  return s;
+  const why = [];
+  let s = 0;
+  const add = (v, label) => { if (v) { why.push([v, label]); s += v; } };
+  const t = tastes[e.category] || 'ok';
+  if (t !== 'ok') add(TASTE_VAL[t], t === 'love' ? `${e.category} : tu aimes (Mes goûts)` : `${e.category} : pas pour toi (Mes goûts)`);
+  if (e._discT) add(2.5, `À essayer : « ${e._discT} » dans le titre`);
+  else if (e._discD) add(1, `À essayer : « ${e._discD} » dans la description`);
+  if (e.sources.length > 1) add(2, `Annoncé sur ${e.sources.length} sites (${e.sources.join(', ')})`);
+  if (TOP_VENUES.test(fold(e.venue))) add(1.5, `Lieu qui vaut le coup : ${e.venue}`);
+  const boring = e._text.match(BORING);
+  if (boring) add(-5, `Sent le « pas ouf » : « ${boring[0]} »`);
+  if (e.kids && !state.kids) add(-1.5, 'Pensé pour les enfants');
+  add(e.image ? 0.3 : -0.7, e.image ? 'Fiche avec photo' : 'Pas de photo (fiche peu soignée)');
+  if ((e.desc || '').length > 60) add(0.3, 'Description détaillée');
+  if (e.free) add(0.5, 'Gratuit');
+  if (e.city && e.city !== 'Toulouse') add(-0.7, `Hors Toulouse (${e.city})`);
+  if (e.full) add(-0.5, 'Complet');
+  add(Math.round(6 * (learned.cat[e.category] || 0)) / 10, `Tes ⭐ / 👎 sur « ${e.category} »`);
+  add(learned.venue[fold(e.venue)] || 0, 'Tes ⭐ / 👎 sur ce lieu');
+  return { s, why };
 }
+const note10 = (s) => Math.max(0, Math.min(10, BASE + s));
+const fmtNote = (n) => (Math.round(n * 10) / 10).toLocaleString('fr-FR', { maximumFractionDigits: 1 });
+const fmtPts = (v) => (v > 0 ? '+' : '−') + fmtNote(Math.abs(v));
 
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
@@ -99,8 +118,9 @@ function readHash() {
   state.city = p.get('city') || '';
   state.moment = p.get('m') || '';
   state.free = p.has('free'); state.kids = p.has('kids'); state.favs = p.has('fav'); state.hideFull = p.has('nofull');
-  state.tab = p.get('tab') === 'ongoing' ? 'ongoing' : 'events';
+  state.tab = ['ongoing', 'plan'].includes(p.get('tab')) ? p.get('tab') : 'events';
   state.pick = p.has('all') ? 'all' : 'best';
+  state.try = p.has('try');
 }
 function writeHash() {
   const p = new URLSearchParams();
@@ -117,6 +137,7 @@ function writeHash() {
   if (state.hideFull) p.set('nofull', '');
   if (state.tab !== 'events') p.set('tab', state.tab);
   if (state.pick === 'all') p.set('all', '');
+  if (state.try) p.set('try', '');
   const h = p.toString().replace(/=(&|$)/g, '$1');
   history.replaceState(null, '', h ? `#${h}` : location.pathname + location.search);
 }
@@ -135,6 +156,10 @@ function range() {
       if (dow === 0) return [t, t];
       const fri = addDays(t, 5 - dow);
       return [fri, addDays(fri, 2)];
+    }
+    case 'nextweekend': { // le week-end d'après "Ce week-end" : samedi + dimanche
+      const sat = dow === 0 ? addDays(t, -1) : addDays(t, 6 - dow); // samedi de "ce week-end"
+      return [addDays(sat, 7), addDays(sat, 8)];
     }
     case '7days': return [t, addDays(t, 6)];
     case 'nextweek': { const mon = addDays(t, ((8 - dow) % 7) || 7); return [mon, addDays(mon, 6)]; }
@@ -185,11 +210,14 @@ function compute() {
     if (state.free && !e.free) continue;
     if (state.kids && !e.kids) continue;
     if (state.hideFull && e.full) continue;
+    if (state.try && !(e._discT || e._discD || e.category === 'Atelier')) continue;
     if (state.city === '__toulouse' ? e.city !== 'Toulouse' : state.city && e.city !== state.city) continue;
     if (state.sources.size && !e.sources.some((s) => state.sources.has(s))) continue;
     if (words.length && !words.every((w) => e._text.includes(w))) continue;
     const sess = e.sessions.filter((s) => sday(s[0]) <= to && sday(s[1]) >= from && momentOk(s) && notOver(s));
-    if (sess.length) base.push({ e, sess, score: score(e) });
+    if (!sess.length) continue;
+    const sc = score(e);
+    base.push({ e, sess, score: sc.s, why: sc.why });
   }
   // Sélection : on enlève ce qui est sous le seuil. Une recherche, une catégorie cochée exprès
   // ou "Mes favoris" passent outre (c'est une demande explicite).
@@ -213,7 +241,19 @@ function sessionTime(ss) {
   return fmtH(times[0]) + `<small>${times.length === 2 ? 'et ' + fmtH(times[1]) : `+ ${times.length - 1} séances`}</small>`;
 }
 
-function card(e, ss, ongoing = false, sc = 0) {
+function noteHtml(sc, why) {
+  const n = note10(sc);
+  const lvl = sc >= TOP ? 'top' : sc >= THRESHOLD ? 'ok' : 'low';
+  const rows = why.map(([v, label]) => `<li><span>${esc(label)}</span><b class="${v > 0 ? 'up' : 'down'}">${fmtPts(v)}</b></li>`).join('');
+  const raw = BASE + sc;
+  return {
+    pill: `<button class="note note--${lvl}" type="button" data-act="why" aria-expanded="false" title="Pourquoi cette note ?">${fmtNote(n)}<small>/10</small></button>`,
+    panel: `<div class="card__why" hidden><p>Pourquoi <strong>${fmtNote(n)}/10</strong> ?</p><ul><li><span>Point de départ</span><b>${BASE}</b></li>${rows}</ul>` +
+      `<p class="card__why-total">${raw > 10 ? `Total ${fmtNote(raw)}, plafonné à 10.` : raw < 0 ? `Total ${fmtNote(raw)}, ramené à 0.` : ''} La Sélection garde les sorties à 6/10 et plus ; « Top » à partir de 9/10.</p></div>`,
+  };
+}
+
+function card(e, ss, ongoing = false, sc = 0, why = []) {
   const url = safeUrl(e.url);
   const img = safeUrl(e.image);
   const place = [e.venue, e.city && e.city !== e.venue ? e.city : ''].filter(Boolean).join(' · ');
@@ -238,8 +278,9 @@ function card(e, ss, ongoing = false, sc = 0) {
     `<span class="tag tag--src">${esc(e.sources.join(' + '))}</span>`,
   ].join('');
   const fav = favs.has(e.id);
+  const note = noteHtml(sc, why);
   return `<article class="card" data-cat="${esc(e.category)}" data-id="${esc(e.id)}">
-    <div class="card__when">${when}</div>
+    <div class="card__when">${when}${note.pill}</div>
     <div class="card__body">
       <h3>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(e.title)}</a>` : esc(e.title)}</h3>
       ${place ? `<p class="card__meta"><a class="maplink" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps">${ICON.pin}<span>${esc(place)}</span></a></p>` : ''}
@@ -255,6 +296,7 @@ function card(e, ss, ongoing = false, sc = 0) {
         <a class="icon-btn" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps" aria-label="Ouvrir dans Google Maps">${ICON.pin}</a>
       </div>
     </div>
+    ${note.panel}
   </article>`;
 }
 
@@ -283,10 +325,10 @@ function render() {
   const pickNote = picking ? ` · <button class="link" type="button" data-pickall>voir les ${totalAll} sans pré-filtre</button>` : '';
   if (state.tab === 'events') {
     const days = new Map();
-    for (const { e, sess, score: sc } of punctual) {
+    for (const { e, sess, score: sc, why } of punctual) {
       const per = new Map();
       for (const s of sess) { const d = sday(s[0]) < from ? from : sday(s[0]); (per.get(d) || per.set(d, []).get(d)).push(s); }
-      for (const [d, ss] of per) (days.get(d) || days.set(d, []).get(d)).push({ e, ss, sc });
+      for (const [d, ss] of per) (days.get(d) || days.set(d, []).get(d)).push({ e, ss, sc, why });
     }
     // Sélection : seulement les PER_DAY mieux notées de chaque jour (le reste derrière "+ N autres")
     const plan = [...days.keys()].sort().map((d) => {
@@ -307,7 +349,7 @@ function render() {
       const rel = relDay(d);
       const dayName = fmtDay.format(toDate(d));
       html += `<section class="day"><h2 class="day__head">${esc(dayName[0].toUpperCase() + dayName.slice(1))}${rel ? ` <span class="rel">${rel}</span>` : ''} <small>${items.length + rest} sortie${items.length + rest > 1 ? 's' : ''}</small></h2><div class="cards">`;
-      for (const it of items) { if (shown >= limit) break; html += card(it.e, it.ss, false, it.sc); shown++; }
+      for (const it of items) { if (shown >= limit) break; html += card(it.e, it.ss, false, it.sc, it.why); shown++; }
       html += '</div>';
       if (rest) html += `<button class="day__more" type="button" data-expand="${d}">+ ${rest} autre${rest > 1 ? 's' : ''} ce jour-là, moins bien notée${rest > 1 ? 's' : ''}</button>`;
       html += '</section>';
@@ -315,13 +357,18 @@ function render() {
     if (ongoing.length && total) {
       html = `<div class="hint"><span>+ ${ongoing.length} expo${ongoing.length > 1 ? 's' : ''} et activités en continu sur cette période</span><button type="button" data-goto="ongoing">Voir</button></div>` + html;
     }
+  } else if (state.tab === 'plan') {
+    const plan = buildPlan(rows, a, b);
+    html = plan.html;
+    total = shown = plan.count;
+    $('#summary').innerHTML = `<strong>Mon programme</strong> — ${esc(label)}${plan.cut ? ' (4 premiers jours)' : ''} · la mieux notée par créneau, sans doublon${pickNote}`;
   } else {
     total = ongoing.length;
     $('#summary').innerHTML = `<strong>${total} expo${total > 1 ? 's' : ''} &amp; activités en continu</strong> — ${esc(label)} · ${picking ? 'les mieux notées en premier' : 'les plus proches de la fin en premier'}${pickNote}`;
     const end = (r) => r.e.sessions[r.e.sessions.length - 1][1];
     const items = ongoing.sort((x, y) => (picking ? y.score - x.score : 0) || end(x).localeCompare(end(y)));
     html += '<div class="cards">';
-    for (const it of items) { if (shown >= limit) break; html += card(it.e, it.sess, true, it.score); shown++; }
+    for (const it of items) { if (shown >= limit) break; html += card(it.e, it.sess, true, it.score, it.why); shown++; }
     html += '</div>';
   }
 
@@ -332,6 +379,67 @@ function render() {
   $('#more').hidden = shown >= total;
   $('#more').textContent = `Voir plus (${total - shown} restantes)`;
 }
+// ---------- Mon programme : pour chaque jour, la mieux notée du matin, de l'après-midi et du soir ----------
+
+const SLOTS = [
+  { label: 'Matin', from: '00:01', to: '12:00', fill: true },
+  { label: 'Après-midi', from: '12:00', to: '18:00', fill: true },
+  { label: 'Soirée', from: '18:00', to: '24:00', fill: false },
+];
+
+function buildPlan(rows, a, b) {
+  const days = [];
+  for (let d = new Date(a); d <= b && days.length < 4; d = addDays(d, 1)) days.push(ymd(d));
+  const cut = ymd(b) > days[days.length - 1];
+  const used = new Set();
+  const picks = [];
+  let html = `<div class="plan__bar"><button class="more" type="button" data-reroll>🎲 Proposer autre chose</button><button class="more" type="button" data-plan-ics>📅 Tout ajouter à mon agenda</button></div>`;
+  for (const d of days) {
+    const dayName = fmtDay.format(toDate(d));
+    const rel = relDay(d);
+    html += `<section class="day plan"><h2 class="day__head">${esc(dayName[0].toUpperCase() + dayName.slice(1))}${rel ? ` <span class="rel">${rel}</span>` : ''}</h2>`;
+    for (const slot of SLOTS) {
+      let cands = [];
+      for (const r of rows) {
+        if (used.has(r.e.id) || r.e.continuous) continue;
+        // à heure fixe dans le créneau, ou "toute la journée" (bon pour le matin / l'après-midi)
+        const ss = r.sess.filter((s) => {
+          const h = time(s[0]);
+          return sday(s[0]) === d && ((h && h !== '00:00' && h >= slot.from && h < slot.to) || (slot.fill && (!h || h === '00:00')));
+        });
+        if (ss.length) cands.push({ ...r, ss });
+      }
+      // rien à heure fixe le matin / l'après-midi : une expo ou activité en continu ouverte ce jour-là
+      if (!cands.length && slot.fill) {
+        for (const r of rows) {
+          if (used.has(r.e.id) || !r.e.continuous) continue;
+          if (r.sess.some((s) => sday(s[0]) <= d && sday(s[1]) >= d)) cands.push({ ...r, ss: [[d, d]], ongoing: true });
+        }
+      }
+      cands = cands.sort((x, y) => y.score - x.score).slice(0, 4);
+      html += `<div class="slot"><h3 class="slot__label">${slot.label}</h3>`;
+      if (!cands.length) { html += '<p class="slot__empty">Rien de bien noté sur ce créneau : temps libre.</p></div>'; continue; }
+      const pick = cands[planSeed % cands.length];
+      used.add(pick.e.id);
+      picks.push({ e: pick.e, s: pick.ss[0] });
+      html += card(pick.e, pick.ss, !!pick.ongoing, pick.score, pick.why);
+      const others = cands.filter((c) => c !== pick).slice(0, 2);
+      if (others.length) {
+        html += `<p class="slot__alt">Autres idées : ${others.map((o) => {
+          const u = safeUrl(o.e.url);
+          const t0 = time(o.ss[0][0]);
+          const h = o.ongoing ? 'en continu' : t0 && t0 !== '00:00' ? fmtH(t0) : 'toute la journée';
+          return `${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(o.e.title)}</a>` : esc(o.e.title)} <span>(${esc(h)} · ${fmtNote(note10(o.score))}/10)</span>`;
+        }).join(' · ')}</p>`;
+      }
+      html += '</div>';
+    }
+    html += '</section>';
+  }
+  lastPlan = picks;
+  return { html, count: picks.length, cut };
+}
+
 // tri dans une journée : d'abord les horaires précis, puis "Journée", puis horaire inconnu
 const key = (ss) => { const h = time(ss[0][0]); return h && h !== '00:00' ? h : h === '00:00' ? '98' : '99'; };
 
@@ -349,10 +457,10 @@ function syncControls() {
   $$('#moment button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.m === state.moment)));
   $$('#pick button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.pick === state.pick)));
   renderTastes();
-  for (const k of ['free', 'kids', 'favs', 'hideFull']) $('#' + k).checked = state[k];
+  for (const k of TOGGLES) $('#' + k).checked = state[k];
   $('#city').value = state.city;
   $$('#sources .chip').forEach((b) => b.setAttribute('aria-pressed', String(state.sources.has(b.dataset.src))));
-  const n = state.cats.size + state.sources.size + (state.city ? 1 : 0) + (state.moment ? 1 : 0) + ['free', 'kids', 'favs', 'hideFull'].filter((k) => state[k]).length;
+  const n = state.cats.size + state.sources.size + (state.city ? 1 : 0) + (state.moment ? 1 : 0) + TOGGLES.filter((k) => state[k]).length;
   $('#activeCount').hidden = !n; $('#activeCount').textContent = n;
 }
 
@@ -391,21 +499,26 @@ function renderStatic() {
 
 // ---------- agenda (.ics) ----------
 
-function downloadIcs(e) {
-  const blob = new Blob([icsFor(e)], { type: 'text/calendar;charset=utf-8' });
+function downloadIcs(text, name) {
+  const blob = new Blob([text], { type: 'text/calendar;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `${fold(e.title).replace(/[^a-z0-9]+/g, '-').slice(0, 50) || 'sortie'}.ics`;
+  a.download = `${fold(name).replace(/[^a-z0-9]+/g, '-').slice(0, 50) || 'sortie'}.ics`;
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
+const wrapIcs = (vevents) => ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//sorties-toulouse//FR', ...vevents.flat(), 'END:VCALENDAR'].join('\r\n');
 
 function icsFor(e) {
   const { from, to } = compute();
   const s = e.sessions.find((x) => sday(x[1]) >= from && sday(x[0]) <= to) || e.sessions[0];
+  return wrapIcs([vevent(e, s)]);
+}
+
+function vevent(e, s) {
   const dt = (v) => v.replace(/[-:]/g, '').slice(0, 13) + '00';
-  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//sorties-toulouse//FR', 'BEGIN:VEVENT',
-    `UID:${e.id}@sorties-toulouse`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`];
+  const lines = ['BEGIN:VEVENT',
+    `UID:${e.id}-${sday(s[0])}@sorties-toulouse`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`];
   const h = time(s[0]);
   if (!h || (h === '00:00' && (time(s[1]) || '23:59') >= '23:00')) {
     lines.push(`DTSTART;VALUE=DATE:${sday(s[0]).replace(/-/g, '')}`, `DTEND;VALUE=DATE:${ymd(addDays(toDate(s[1]), 1)).replace(/-/g, '')}`);
@@ -418,8 +531,8 @@ function icsFor(e) {
   lines.push(`SUMMARY:${txt(e.title)}`, `LOCATION:${txt([e.venue, e.address, city].filter(Boolean).join(', '))}`,
     `DESCRIPTION:${txt((e.desc ? e.desc + '\n\n' : '') + (e.url || ''))}`);
   if (safeUrl(e.url)) lines.push(`URL:${e.url}`);
-  lines.push('END:VEVENT', 'END:VCALENDAR');
-  return lines.join('\r\n');
+  lines.push('END:VEVENT');
+  return lines;
 }
 
 // ---------- événements de l'interface ----------
@@ -430,7 +543,7 @@ function update(fn) { fn(); limit = PAGE; expandedDays.clear(); render(); }
 function goHome() {
   update(() => Object.assign(state, {
     when: 'weekend', from: '', to: '', q: '', cats: new Set(), sources: new Set(), city: '', moment: '',
-    free: false, kids: false, favs: false, hideFull: false, tab: 'events', pick: 'best',
+    free: false, kids: false, favs: false, hideFull: false, try: false, tab: 'events', pick: 'best',
   }));
   $('#filters').classList.remove('open');
   $('#filtersBtn').setAttribute('aria-expanded', 'false');
@@ -477,10 +590,10 @@ function bind() {
     render();
   });
   $('#unhide').addEventListener('click', () => { hidden.clear(); store.set('sorties-masques', []); render(); });
-  for (const k of ['free', 'kids', 'favs', 'hideFull']) $('#' + k).addEventListener('change', (ev) => update(() => { state[k] = ev.target.checked; }));
+  for (const k of TOGGLES) $('#' + k).addEventListener('change', (ev) => update(() => { state[k] = ev.target.checked; }));
   $('#city').addEventListener('change', (ev) => update(() => { state.city = ev.target.value; }));
   $('#reset').addEventListener('click', () => update(() => {
-    Object.assign(state, { q: '', cats: new Set(), sources: new Set(), city: '', moment: '', free: false, kids: false, favs: false, hideFull: false });
+    Object.assign(state, { q: '', cats: new Set(), sources: new Set(), city: '', moment: '', free: false, kids: false, favs: false, hideFull: false, try: false });
   }));
   $$('.tabs [role=tab]').forEach((tab) => tab.addEventListener('click', () => update(() => { state.tab = tab.dataset.tab; })));
   $('#filtersBtn').addEventListener('click', () => {
@@ -499,9 +612,20 @@ function bind() {
     if (go) { update(() => { state.tab = go.dataset.goto; }); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
     const more = ev.target.closest('[data-expand]');
     if (more) { expandedDays.add(more.dataset.expand); render(); return; }
+    if (ev.target.closest('[data-reroll]')) { planSeed++; render(); return; }
+    if (ev.target.closest('[data-plan-ics]')) {
+      if (lastPlan.length) downloadIcs(wrapIcs(lastPlan.map((p) => vevent(p.e, p.s))), 'mon-programme-sorties');
+      return;
+    }
     const btn = ev.target.closest('[data-act]'); if (!btn) return;
     const id = btn.closest('.card').dataset.id;
     const e = EVENTS.find((x) => x.id === id); if (!e) return;
+    if (btn.dataset.act === 'why') {
+      const panel = btn.closest('.card').querySelector('.card__why');
+      panel.hidden = !panel.hidden;
+      btn.setAttribute('aria-expanded', String(!panel.hidden));
+      return;
+    }
     if (btn.dataset.act === 'nope') {
       hidden.add(id); store.set('sorties-masques', [...hidden]);
       learn(e, -1);
@@ -518,7 +642,7 @@ function bind() {
       btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on));
       btn.title = on ? 'Retirer des favoris' : 'Ajouter aux favoris';
       if (state.favs && !on) render();
-    } else if (btn.dataset.act === 'ics') downloadIcs(e);
+    } else if (btn.dataset.act === 'ics') downloadIcs(icsFor(e), e.title);
   });
 
   window.addEventListener('hashchange', () => { readHash(); limit = PAGE; render(); });
@@ -610,7 +734,13 @@ async function start() {
   EVENTS = DATA.events
     .map((e) => ({ ...e, sessions: e.sessions.filter((s) => sday(s[1]) >= t), sources: e.sources || [] }))
     .filter((e) => e.sessions.length);
-  for (const e of EVENTS) e._text = fold([e.title, e.venue, e.city, e.category, e.desc, e.address, e.free ? 'gratuit' : '', e.sources.join(' ')].join(' '));
+  // mot "à essayer" trouvé dans le titre (gros bonus) ou la description (petit bonus), avec ses accents d'origine
+  const discWord = (txt) => { const m = fold(txt).match(DISCOVERY); return m ? (txt || '').substr(m.index, m[0].length).toLowerCase() : ''; };
+  for (const e of EVENTS) {
+    e._text = fold([e.title, e.venue, e.city, e.category, e.desc, e.address, e.free ? 'gratuit' : '', e.sources.join(' ')].join(' '));
+    e._discT = discWord(e.title);
+    e._discD = e._discT ? '' : discWord(e.desc);
+  }
   renderStatic();
   render();
 }
