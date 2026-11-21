@@ -425,6 +425,161 @@ async function fetchTicketmaster() {
   return out;
 }
 
+// ---------- lieux & restos (sans date) : OpenStreetMap + Guide Michelin ----------
+// OpenStreetMap : © les contributeurs OpenStreetMap, licence ODbL (mention dans le pied de page du site).
+
+const OSM_QUERY = `[out:json][timeout:120];area["name"="Toulouse"]["admin_level"="8"]->.t;(
+nwr["amenity"~"^(restaurant|bar|pub|cafe)$"]["name"](area.t);
+nwr["leisure"~"^(escape_game|bowling_alley|trampoline_park|miniature_golf|amusement_arcade)$"]["name"](area.t);
+nwr["sport"="climbing"]["name"](area.t);
+nwr["tourism"~"^(museum|gallery|viewpoint)$"]["name"](area.t);
+nwr["tourism"="attraction"]["name"]["wikidata"](area.t);
+nwr["leisure"~"^(park|garden)$"]["name"]["wikidata"](area.t);
+);out center tags;`;
+
+const CUISINES = {
+  french: 'française', pizza: 'pizza', asian: 'asiatique', japanese: 'japonaise', italian: 'italienne', regional: 'du Sud-Ouest',
+  chinese: 'chinoise', indian: 'indienne', vietnamese: 'vietnamienne', sushi: 'sushis', tapas: 'tapas', burger: 'burgers',
+  thai: 'thaïlandaise', fine_dining: 'gastronomique', gastronomic: 'gastronomique', gourmet: 'gastronomique', modern: 'moderne', lebanese: 'libanaise', african: 'africaine', seafood: 'fruits de mer',
+  salad: 'salades', steak_house: 'viandes', crepe: 'crêpes', ramen: 'ramen', korean: 'coréenne', sandwich: 'sandwichs',
+  pasta: 'pâtes', chicken: 'poulet', mexican: 'mexicaine', poke: 'poke', moroccan: 'marocaine', argentinian: 'argentine',
+  spanish: 'espagnole', barbecue: 'barbecue', mediterranean: 'méditerranéenne', local: 'locale', bistro: 'bistrot',
+  fish: 'poisson', caribbean: 'caribéenne', pancake: 'pancakes', noodle: 'nouilles', international: 'du monde',
+  traditional: 'traditionnelle', ethiopian: 'éthiopienne', peruvian: 'péruvienne', greek: 'grecque', turkish: 'turque',
+  georgian: 'géorgienne', brazilian: 'brésilienne', portuguese: 'portugaise', vegan: 'vegan', vegetarian: 'végétarienne',
+  kebab: 'kebab', tex_mex: 'tex-mex', syrian: 'syrienne', persian: 'persane', iranian: 'iranienne', senegalese: 'sénégalaise',
+  cambodian: 'cambodgienne', taiwanese: 'taïwanaise', nepalese: 'népalaise', tibetan: 'tibétaine', afghan: 'afghane',
+  basque: 'basque', corsican: 'corse', savoyard: 'savoyarde', cheese: 'fromage', fondue: 'fondue', brunch: 'brunch',
+  coffee_shop: 'coffee shop', cake: 'pâtisserie', ice_cream: 'glaces', tea: 'thé', bubble_tea: 'bubble tea', dessert: 'desserts',
+};
+const cuisineLabel = (c) => (c || '').split(';').map((x) => x.trim()).filter(Boolean).slice(0, 2)
+  .map((x) => CUISINES[x] || x.replace(/_/g, ' ')).join(', ');
+
+function osmKind(t) {
+  if (t.amenity === 'restaurant') return ['Resto', cuisineLabel(t.cuisine)];
+  if (t.amenity === 'bar' || t.amenity === 'pub') return ['Bar', t.amenity === 'pub' ? 'pub' : t.cocktails === 'yes' ? 'cocktails' : t.microbrewery === 'yes' ? 'brasserie artisanale' : ''];
+  if (t.amenity === 'cafe') return ['Café', cuisineLabel(t.cuisine)];
+  const act = { escape_game: 'escape game', bowling_alley: 'bowling', trampoline_park: 'trampoline', miniature_golf: 'mini-golf', amusement_arcade: 'salle de jeux' };
+  if (act[t.leisure]) return ['Activité', act[t.leisure]];
+  if (t.sport === 'climbing') return ['Activité', 'escalade'];
+  const lieu = { museum: 'musée', gallery: 'galerie', viewpoint: 'point de vue', attraction: 'à voir' };
+  if (lieu[t.tourism]) return ['Lieu', lieu[t.tourism]];
+  if (t.leisure === 'park' || t.leisure === 'garden') return ['Lieu', t.leisure === 'park' ? 'parc' : 'jardin'];
+  return null;
+}
+
+async function fetchOSM() {
+  let data, last;
+  // Overpass est souvent chargé (erreur 504) : 3 serveurs publics, 2 tours, avec une pause entre les tours
+  const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+  for (const [i, endpoint] of [...endpoints, ...endpoints].entries()) {
+    if (data) break;
+    if (i === endpoints.length) await sleep(20000);
+    try {
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'user-agent': UA, 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(OSM_QUERY),
+        signal: AbortSignal.timeout(150000),
+      });
+      if (!r.ok) throw new Error(`Overpass HTTP ${r.status}`);
+      const j = await r.json();
+      if ((j.elements || []).length) data = j; else throw new Error('Overpass : réponse vide');
+    } catch (e) { last = e; }
+  }
+  if (!data) throw last;
+  const out = [];
+  for (const el of data.elements || []) {
+    const t = el.tags || {};
+    const k = osmKind(t);
+    if (!k || t.opening_hours === 'closed' || t.disused) continue;
+    const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
+    if (lat == null) continue;
+    out.push({
+      id: `osm-${el.type[0]}${el.id}`,
+      name: clean(t.name),
+      kind: k[0], detail: k[1],
+      address: [t['addr:housenumber'], t['addr:street']].filter(Boolean).join(' '),
+      city: t['addr:city'] || 'Toulouse',
+      lat: +lat.toFixed(6), lon: +lon.toFixed(6),
+      url: t.website || t['contact:website'] || t.url || '',
+      hours: (t.opening_hours || '').slice(0, 90),
+      terrace: t.outdoor_seating === 'yes',
+      veg: /yes|only/.test(`${t['diet:vegetarian'] || ''} ${t['diet:vegan'] || ''}`),
+      chain: !!(t.brand || t['brand:wikidata']),
+      notable: !!(t.wikidata || t.wikipedia),
+      cuisineRaw: t.cuisine || '',
+      source: 'OpenStreetMap',
+    });
+  }
+  return out;
+}
+
+const MICHELIN_URL = 'https://guide.michelin.com/fr/fr/occitanie/toulouse/restaurants';
+async function fetchMichelin() {
+  const html = await get(MICHELIN_URL);
+  const DIST = { '3 star': '3 étoiles', '2 star': '2 étoiles', '1 star': '1 étoile', bib: 'Bib Gourmand', '': 'Sélection' };
+  const out = [];
+  for (const c of html.split('js-restaurant__list_item js-match-height js-map ').slice(1)) {
+    const id = c.match(/data-id="(\d+)"/)?.[1];
+    const lat = c.match(/data-lat="([\d.-]+)"/)?.[1], lon = c.match(/data-lng="([\d.-]+)"/)?.[1];
+    const name = clean(c.match(/data-restaurant-name="([^"]*)"/)?.[1]);
+    if (!id || !name || !lat) continue;
+    const href = c.match(/href="(\/fr\/[^"]+\/restaurant\/[^"]+)"/)?.[1];
+    const content = c.slice(c.indexOf('card__menu-content'), c.indexOf('card__menu-content') + 4000).replace(/<[^>]+>/g, '|');
+    const m = content.match(/(€{1,4})\s*·\s*([^|]+)/);
+    out.push({
+      id: `mi-${id}`, name, kind: 'Resto',
+      detail: m ? clean(m[2]).toLowerCase().replace(/^cuisine /, '') : '',
+      price: m?.[1] || '',
+      michelin: DIST[c.match(/data-dtm-distinction="([^"]*)"/)?.[1] ?? ''] || 'Sélection',
+      address: '', city: 'Toulouse', lat: +lat, lon: +lon,
+      url: href ? `https://guide.michelin.com${href}` : MICHELIN_URL,
+      source: 'Guide Michelin',
+    });
+  }
+  return out;
+}
+
+const PLACE_SOURCES = [
+  { name: 'OpenStreetMap', site: 'https://www.openstreetmap.org/#map=13/43.6045/1.4440', run: fetchOSM },
+  { name: 'Guide Michelin', site: MICHELIN_URL, run: fetchMichelin },
+];
+
+const metres = (a, b) => {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+// Un resto Michelin qui est aussi sur OpenStreetMap : une seule fiche, enrichie.
+function mergePlaces(list) {
+  const osm = list.filter((p) => p.source === 'OpenStreetMap');
+  const out = [...osm];
+  for (const m of list.filter((p) => p.source === 'Guide Michelin')) {
+    const k = fold(m.name).replace(/[^a-z0-9]/g, '');
+    const twin = osm.find((o) => o.kind === 'Resto' && metres(o, m) < 150 && (() => {
+      const ko = fold(o.name).replace(/[^a-z0-9]/g, '');
+      return ko.length >= 4 && (k.includes(ko) || ko.includes(k));
+    })());
+    if (twin) Object.assign(twin, { michelin: m.michelin, price: m.price, michelinUrl: m.url, detail: twin.detail || m.detail, sources: ['OpenStreetMap', 'Guide Michelin'] });
+    else out.push(m);
+  }
+  // même nom, même type, à moins de 250 m : doublon de la carte (ex. deux points pour une même salle)
+  const kept = [];
+  for (const p of out) {
+    const k = fold(p.name).replace(/[^a-z0-9]/g, '');
+    if (kept.some((q) => q.kind === p.kind && fold(q.name).replace(/[^a-z0-9]/g, '') === k && metres(q, p) < 250)) continue;
+    kept.push(p);
+  }
+  return kept.map((p) => {
+    const q = { ...p, sources: p.sources || [p.source] };
+    delete q.source;
+    for (const key of Object.keys(q)) if (q[key] === '' || q[key] === false || q[key] == null) delete q[key];
+    return q;
+  });
+}
+
 // ---------- assemblage ----------
 
 const SOURCES = [
@@ -522,9 +677,29 @@ async function main() {
     .map(finalize)
     .sort((a, b) => a.sessions[0][0].localeCompare(b.sessions[0][0]) || a.title.localeCompare(b.title, 'fr'));
 
+  // lieux & restos (sans date), même principe de secours que pour les événements
+  const placeList = [];
+  for (const s of PLACE_SOURCES) {
+    try {
+      const ps = await s.run();
+      if (!ps.length) throw new Error('0 lieu récupéré');
+      ps.forEach((p) => placeList.push(p));
+      report.push({ name: s.name, site: s.site, ok: true, count: ps.length, places: true });
+      console.log(`✓ ${s.name} : ${ps.length} lieux`);
+    } catch (err) {
+      const kept = (previous.places || []).filter((p) => (p.sources || [])[0] === s.name).map((p) => ({ ...p, source: s.name }));
+      kept.forEach((p) => placeList.push(p));
+      report.push({ name: s.name, site: s.site, ok: false, count: kept.length, places: true, error: String(err.message || err).slice(0, 200) });
+      console.warn(`✗ ${s.name} : ${err.message} — ${kept.length} lieux repris de la veille`);
+    }
+  }
+  const places = mergePlaces(placeList).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+
   const head = { generatedAt: new Date().toISOString(), today, horizon, sources: report, categories: CATEGORIES };
-  // un événement par ligne : l'historique Git reste lisible et léger d'un jour à l'autre
-  const json = JSON.stringify(head).slice(0, -1) + ',"events":[\n' + events.map((e) => JSON.stringify(e)).join(',\n') + '\n]}\n';
+  // un élément par ligne : l'historique Git reste lisible et léger d'un jour à l'autre
+  const json = JSON.stringify(head).slice(0, -1) +
+    ',"events":[\n' + events.map((e) => JSON.stringify(e)).join(',\n') + '\n]' +
+    ',"places":[\n' + places.map((p) => JSON.stringify(p)).join(',\n') + '\n]}\n';
   await mkdir(dirname(OUT), { recursive: true });
   if (!process.env.CI) {
     await writeFile(OUT, json);

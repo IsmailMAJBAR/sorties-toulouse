@@ -34,6 +34,7 @@ const ICON = {
   cal: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M12 13v5M9.5 15.5h5"/></svg>',
   pin: '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
   nope: '<svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.7a2 2 0 0 0-2 1.7l-1.4 9A2 2 0 0 0 4.3 15zM17 2h2.7A2.3 2.3 0 0 1 22 4v7a2.3 2.3 0 0 1-2.3 2H17"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16.5 9.5"/></svg>',
 };
 
 // ---------- pré-filtre "Sélection" ----------
@@ -66,6 +67,9 @@ const state = {
 };
 const TOGGLES = ['try', 'free', 'kids', 'favs', 'hideFull'];
 let planSeed = 0, lastPlan = [];
+let PLACES = [];
+let tested = new Set(store.get('sorties-testes', []));
+state.pkind = ''; state.showTested = false;
 let favs = new Set(store.get('sorties-favs', []));
 let hidden = new Set(store.get('sorties-masques', []));
 let tastes = { ...DEFAULT_TASTES, ...store.get('sorties-gouts', {}) };
@@ -118,7 +122,8 @@ function readHash() {
   state.city = p.get('city') || '';
   state.moment = p.get('m') || '';
   state.free = p.has('free'); state.kids = p.has('kids'); state.favs = p.has('fav'); state.hideFull = p.has('nofull');
-  state.tab = ['ongoing', 'plan'].includes(p.get('tab')) ? p.get('tab') : 'events';
+  state.tab = ['ongoing', 'plan', 'places'].includes(p.get('tab')) ? p.get('tab') : 'events';
+  state.pkind = p.get('pk') || '';
   state.pick = p.has('all') ? 'all' : 'best';
   state.try = p.has('try');
 }
@@ -138,6 +143,7 @@ function writeHash() {
   if (state.tab !== 'events') p.set('tab', state.tab);
   if (state.pick === 'all') p.set('all', '');
   if (state.try) p.set('try', '');
+  if (state.pkind) p.set('pk', state.pkind);
   const h = p.toString().replace(/=(&|$)/g, '$1');
   history.replaceState(null, '', h ? `#${h}` : location.pathname + location.search);
 }
@@ -357,6 +363,14 @@ function render() {
     if (ongoing.length && total) {
       html = `<div class="hint"><span>+ ${ongoing.length} expo${ongoing.length > 1 ? 's' : ''} et activités en continu sur cette période</span><button type="button" data-goto="ongoing">Voir</button></div>` + html;
     }
+  } else if (state.tab === 'places') {
+    const r = renderPlaces(state.pick === 'best');
+    shown = r.shown;
+    const strict = state.pick === 'best' && !state.q && !state.favs;
+    $('#summary').innerHTML = `<strong>${strict ? 'À tester : ' : ''}${r.total} lieu${r.total > 1 ? 'x' : ''}</strong> — restos, bars, cafés, activités et lieux à voir, toujours dispo · le mieux noté en premier${strict ? ` · <button class="link" type="button" data-pickall>voir les ${r.all}</button>` : ''}`;
+    // les boutons de type (Restos, Bars…) restent affichés même si la liste est vide
+    html = r.total ? r.html : r.html + '<div class="empty"><strong>Aucun lieu ne correspond.</strong>Essaie « Tout » ou une autre recherche.</div>';
+    total = r.total || -1;
   } else if (state.tab === 'plan') {
     const plan = buildPlan(rows, a, b);
     html = plan.html;
@@ -379,6 +393,135 @@ function render() {
   $('#more').hidden = shown >= total;
   $('#more').textContent = `Voir plus (${total - shown} restantes)`;
 }
+// ---------- Lieux & restos (OpenStreetMap + Guide Michelin) : pas datés, toujours dispo ----------
+
+const KINDS = [
+  { k: 'Resto', label: 'Restos', icon: '🍽️' }, { k: 'Bar', label: 'Bars', icon: '🍸' }, { k: 'Café', label: 'Cafés', icon: '☕' },
+  { k: 'Activité', label: 'Activités', icon: '🧗' }, { k: 'Lieu', label: 'Lieux à voir', icon: '🏛️' },
+];
+const KIND = Object.fromEntries(KINDS.map((x) => [x.k, x]));
+// cuisines "de tous les jours" : pas de bonus "à découvrir"
+const COMMON_CUISINE = /^(french|pizza|burger|kebab|sandwich|italian|regional|asian|chinese|japanese|sushi|crepe|salad|chicken|pasta|steak_house|coffee_shop|local|traditional|international|fine_dining|gastronomic|gourmet|modern|creative|bistro|brasserie|grill|meat|wine_bar|ice_cream|cake|tea|brunch|tapas|seafood|fish|bagel|breakfast|friture|fries|pancake|donut|dessert|coffee|cafe|bar)$/;
+const MICHELIN_PTS = { '3 étoiles': 4.5, '2 étoiles': 4, '1 étoile': 3.5, 'Bib Gourmand': 3, 'Sélection': 2.5 };
+
+function placeScore(p) {
+  const why = [];
+  let s = 0;
+  const add = (v, label) => { if (v) { why.push([v, label]); s += v; } };
+  if (p.michelin) add(MICHELIN_PTS[p.michelin] || 2.5, `Guide Michelin : ${p.michelin}${p.michelin === 'Bib Gourmand' ? ' (très bon rapport qualité-prix)' : ''}`);
+  const rare = (p.cuisineRaw || '').split(';').map((x) => x.trim()).find((c) => c && !COMMON_CUISINE.test(c));
+  if (p.kind === 'Resto' && rare) add(2, `Cuisine à découvrir : ${p.detail}`);
+  if (p.kind === 'Activité') add(2.5, `Activité à tester : ${p.detail}`);
+  if (p.kind === 'Lieu' && p.notable) add(1, 'Lieu connu (fiche Wikipédia)');
+  if (p.kind === 'Bar' && /cocktails|brasserie artisanale/.test(p.detail || '')) add(1, `Bar : ${p.detail}`);
+  add(p.url ? 0.5 : -0.5, p.url ? 'A un site web' : 'Pas de site web');
+  if (p.hours) add(0.3, 'Horaires renseignés');
+  if (p.terrace) add(0.3, 'Terrasse');
+  if (p.veg) add(0.3, 'Options végé');
+  if (p.chain) add(-3, 'Chaîne');
+  if (p.price === '€€€€') add(-1, 'Très cher (€€€€)');
+  if (p.kind === 'Resto' && !p.detail) add(-0.5, 'Type de cuisine inconnu');
+  add(Math.round(6 * (learned.cat['lieu:' + p.kind] || 0)) / 10, `Tes ⭐ / 👎 sur les ${KIND[p.kind].label.toLowerCase()}`);
+  add(learned.venue[p._fname] || 0, 'Tes ⭐ / 👎 sur ce lieu');
+  return { s, why };
+}
+function learnPlace(p, delta) {
+  const clamp = (v) => Math.max(-4, Math.min(4, v));
+  learned.cat['lieu:' + p.kind] = clamp((learned.cat['lieu:' + p.kind] || 0) + delta);
+  learned.venue[p._fname] = clamp((learned.venue[p._fname] || 0) + delta);
+  store.set('sorties-appris', learned);
+}
+const distM = (a, b) => {
+  const R = 6371000, rad = Math.PI / 180;
+  const h = Math.sin((b.lat - a.lat) * rad / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin((b.lon - a.lon) * rad / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+const fmtDist = (m) => (m < 950 ? `${Math.max(50, Math.round(m / 50) * 50)} m` : `${(m / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} km`);
+
+function placeCard(p, sc, why, near = '') {
+  const url = safeUrl(p.url) || safeUrl(p.michelinUrl);
+  const mapUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent([p.name, p.address, p.city || 'Toulouse'].filter(Boolean).join(', '));
+  const note = noteHtml(sc, why);
+  const kind = KIND[p.kind];
+  const info = [p.detail, p.price].filter(Boolean).join(' · ');
+  const isTested = tested.has(p.id), fav = favs.has(p.id);
+  const tags = [
+    sc >= TOP ? '<span class="tag tag--top">Top</span>' : '',
+    `<span class="tag tag--cat">${esc(kind.label.replace(/s$/, '').replace('Lieux à voi', 'Lieu à voir'))}</span>`,
+    p.michelin ? `<span class="tag tag--michelin">Michelin · ${esc(p.michelin)}</span>` : '',
+    p.terrace ? '<span class="tag">Terrasse</span>' : '',
+    p.veg ? '<span class="tag">Végé</span>' : '',
+    isTested ? '<span class="tag tag--free">Testé ✓</span>' : '',
+    p.michelinUrl && p.url ? `<a class="tag tag--src" href="${esc(p.michelinUrl)}" target="_blank" rel="noopener">fiche Michelin</a>` : '',
+  ].join('');
+  return `<article class="card place" data-kind="${esc(p.kind)}" data-id="${esc(p.id)}">
+    <div class="card__when"><span class="card__time card__kind" aria-hidden="true">${kind.icon}</span>${note.pill}</div>
+    <div class="card__body">
+      <h3>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)}</h3>
+      ${info ? `<p class="card__meta">${esc(info[0].toUpperCase() + info.slice(1))}</p>` : ''}
+      <p class="card__meta"><a class="maplink" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps">${ICON.pin}<span>${esc(p.address || 'Voir sur la carte')}${near ? ` · ${esc(near)}` : ''}</span></a></p>
+    </div>
+    <div class="card__foot">
+      <div class="tags">${tags}</div>
+      <div class="actions">
+        <button class="icon-btn" data-act="nope" title="Pas pour moi : masquer et voir moins de ce genre" aria-label="Pas pour moi">${ICON.nope}</button>
+        <button class="icon-btn${fav ? ' on' : ''}" data-act="fav" title="${fav ? 'Retirer des favoris' : 'Ajouter aux favoris'}" aria-pressed="${fav}" aria-label="Favori">${ICON.star}</button>
+        <button class="icon-btn${isTested ? ' on' : ''}" data-act="tested" title="${isTested ? 'Pas encore testé finalement' : "J'ai testé"}" aria-pressed="${isTested}" aria-label="Testé">${ICON.check}</button>
+        <a class="icon-btn" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps" aria-label="Ouvrir dans Google Maps">${ICON.pin}</a>
+      </div>
+    </div>
+    ${note.panel}
+  </article>`;
+}
+
+function placeRows() {
+  const words = fold(state.q).split(/\s+/).filter(Boolean);
+  const rows = [];
+  for (const p of PLACES) {
+    if (hidden.has(p.id)) continue;
+    if (state.favs && !favs.has(p.id)) continue;
+    if (!state.showTested && tested.has(p.id)) continue;
+    if (words.length && !words.every((w) => p._text.includes(w))) continue;
+    const sc = placeScore(p);
+    rows.push({ p, s: sc.s, why: sc.why });
+  }
+  return { rows, words };
+}
+
+function renderPlaces(picking) {
+  const { rows: all, words } = placeRows();
+  const strict = picking && !words.length && !state.favs;
+  const kept = strict ? all.filter((r) => r.s >= THRESHOLD) : all;
+  const counts = {};
+  for (const r of kept) counts[r.p.kind] = (counts[r.p.kind] || 0) + 1;
+  const rows = (state.pkind ? kept.filter((r) => r.p.kind === state.pkind) : kept)
+    .sort((x, y) => y.s - x.s || x.p.name.localeCompare(y.p.name, 'fr'));
+  const nTested = PLACES.filter((p) => tested.has(p.id)).length;
+  let html = `<div class="kinds">${[{ k: '', label: 'Tout', icon: '' }, ...KINDS].map((x) =>
+    `<button class="chip" type="button" data-pkind="${esc(x.k)}" aria-pressed="${state.pkind === x.k}">${x.icon} ${esc(x.label)} <span class="n">${x.k ? counts[x.k] || 0 : kept.length}</span></button>`).join('')}</div>`;
+  if (nTested) html += `<p class="tested-toggle"><button class="link" type="button" data-showtested>${state.showTested ? 'Masquer' : 'Afficher'} ${nTested > 1 ? `les ${nTested} lieux déjà testés` : 'le lieu déjà testé'}</button></p>`;
+  html += '<div class="cards">';
+  let shown = 0;
+  for (const r of rows) { if (shown >= limit) break; html += placeCard(r.p, r.s, r.why); shown++; }
+  html += '</div>';
+  return { html, total: rows.length, shown, all: all.length };
+}
+
+// le meilleur lieu d'un type autour d'un point (pour "Mon programme") : la note, moins 1 point par km
+function bestNear(anchor, kind, maxM, exclude) {
+  const out = [];
+  for (const p of PLACES) {
+    if (p.kind !== kind || hidden.has(p.id) || tested.has(p.id) || exclude.has(p.id)) continue;
+    const d = distM(anchor, p);
+    if (d > maxM) continue;
+    const sc = placeScore(p);
+    out.push({ p, s: sc.s, why: sc.why, d, rank: sc.s - d / 1000 });
+  }
+  out.sort((a, b) => b.rank - a.rank);
+  const top = out.slice(0, 3);
+  return top.length ? top[planSeed % top.length] : null;
+}
+
 // ---------- Mon programme : pour chaque jour, la mieux notée du matin, de l'après-midi et du soir ----------
 
 const SLOTS = [
@@ -392,12 +535,14 @@ function buildPlan(rows, a, b) {
   for (let d = new Date(a); d <= b && days.length < 4; d = addDays(d, 1)) days.push(ymd(d));
   const cut = ymd(b) > days[days.length - 1];
   const used = new Set();
+  const usedPlaces = new Set();
   const picks = [];
   let html = `<div class="plan__bar"><button class="more" type="button" data-reroll>🎲 Proposer autre chose</button><button class="more" type="button" data-plan-ics>📅 Tout ajouter à mon agenda</button></div>`;
   for (const d of days) {
     const dayName = fmtDay.format(toDate(d));
     const rel = relDay(d);
     html += `<section class="day plan"><h2 class="day__head">${esc(dayName[0].toUpperCase() + dayName.slice(1))}${rel ? ` <span class="rel">${rel}</span>` : ''}</h2>`;
+    let anchor = null; // dernière sortie du jour avec une position : on cherche à manger / boire autour
     for (const slot of SLOTS) {
       let cands = [];
       for (const r of rows) {
@@ -422,6 +567,9 @@ function buildPlan(rows, a, b) {
       const pick = cands[planSeed % cands.length];
       used.add(pick.e.id);
       picks.push({ e: pick.e, s: pick.ss[0] });
+      if (pick.e.lat != null && pick.e.lon != null && !/multi|plusieurs lieux|divers lieux/i.test(pick.e.venue || '')) {
+        anchor = { lat: pick.e.lat, lon: pick.e.lon, venue: pick.e.venue || pick.e.title };
+      }
       html += card(pick.e, pick.ss, !!pick.ongoing, pick.score, pick.why);
       const others = cands.filter((c) => c !== pick).slice(0, 2);
       if (others.length) {
@@ -433,6 +581,21 @@ function buildPlan(rows, a, b) {
         }).join(' · ')}</p>`;
       }
       html += '</div>';
+    }
+    // idée resto + un verre, autour de la dernière sortie du jour (sinon en centre-ville, place du Capitole)
+    if (PLACES.length) {
+      const at = anchor || { lat: 43.6045, lon: 1.4440, venue: 'Capitole' };
+      const where = anchor ? `près de ${anchor.venue}` : 'en centre-ville';
+      const food = bestNear(at, 'Resto', 1500, usedPlaces);
+      if (food) {
+        usedPlaces.add(food.p.id);
+        html += `<div class="slot slot--food"><h3 class="slot__label">🍽️ Pour manger · ${esc(where)}</h3>${placeCard(food.p, food.s, food.why, `à ${fmtDist(food.d)}`)}</div>`;
+      }
+      const drink = bestNear(food ? food.p : at, 'Bar', 900, usedPlaces);
+      if (drink) {
+        usedPlaces.add(drink.p.id);
+        html += `<div class="slot slot--food"><h3 class="slot__label">🍸 Un verre après</h3>${placeCard(drink.p, drink.s, drink.why, `à ${fmtDist(drink.d)}`)}</div>`;
+      }
     }
     html += '</section>';
   }
@@ -493,6 +656,7 @@ function renderStatic() {
   }
   $('#foot').innerHTML = `<strong>Sources</strong> — récupérées automatiquement chaque matin. Vérifie toujours les infos sur le site de l'organisateur avant de te déplacer.
     <ul>${(DATA.sources || []).map((s) => `<li class="${s.ok ? '' : 'ko'}">${s.ok ? '✓' : '⚠'} <a href="${esc(safeUrl(s.site) || '#')}" target="_blank" rel="noopener">${esc(s.name)}</a> (${s.count})${s.ok ? '' : ' — en panne, données de la veille'}</li>`).join('')}</ul>
+    <p>Lieux &amp; restos : données <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© les contributeurs OpenStreetMap</a> (ODbL) et sélection du <a href="https://guide.michelin.com/fr/fr/occitanie/toulouse/restaurants" target="_blank" rel="noopener">Guide Michelin</a>. Pas d'avis clients : la note vient des règles expliquées sous chaque fiche.</p>
     ${ENCRYPTED ? '<p><button class="link" id="logout" type="button">Se déconnecter de cet appareil</button></p>' : ''}`;
   $('#logout')?.addEventListener('click', () => { forgetKey(); location.reload(); });
 }
@@ -613,13 +777,24 @@ function bind() {
     const more = ev.target.closest('[data-expand]');
     if (more) { expandedDays.add(more.dataset.expand); render(); return; }
     if (ev.target.closest('[data-reroll]')) { planSeed++; render(); return; }
+    const pk = ev.target.closest('[data-pkind]');
+    if (pk) { update(() => { state.pkind = pk.dataset.pkind; }); return; }
+    if (ev.target.closest('[data-showtested]')) { state.showTested = !state.showTested; render(); return; }
+    if (ev.target.closest('[data-pickall]')) { update(() => { state.pick = 'all'; }); return; }
     if (ev.target.closest('[data-plan-ics]')) {
       if (lastPlan.length) downloadIcs(wrapIcs(lastPlan.map((p) => vevent(p.e, p.s))), 'mon-programme-sorties');
       return;
     }
     const btn = ev.target.closest('[data-act]'); if (!btn) return;
     const id = btn.closest('.card').dataset.id;
-    const e = EVENTS.find((x) => x.id === id); if (!e) return;
+    const e = EVENTS.find((x) => x.id === id) || PLACES.find((x) => x.id === id); if (!e) return;
+    const teach = e.sessions ? learn : learnPlace;
+    if (btn.dataset.act === 'tested') {
+      tested.has(id) ? tested.delete(id) : tested.add(id);
+      store.set('sorties-testes', [...tested]);
+      render();
+      return;
+    }
     if (btn.dataset.act === 'why') {
       const panel = btn.closest('.card').querySelector('.card__why');
       panel.hidden = !panel.hidden;
@@ -628,7 +803,7 @@ function bind() {
     }
     if (btn.dataset.act === 'nope') {
       hidden.add(id); store.set('sorties-masques', [...hidden]);
-      learn(e, -1);
+      teach(e, -1);
       const el = btn.closest('.card');
       el.style.transition = 'opacity .2s'; el.style.opacity = '0';
       setTimeout(render, 200);
@@ -638,7 +813,7 @@ function bind() {
       favs.has(id) ? favs.delete(id) : favs.add(id);
       store.set('sorties-favs', [...favs]);
       const on = favs.has(id);
-      learn(e, on ? 1 : -1);
+      teach(e, on ? 1 : -1);
       btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on));
       btn.title = on ? 'Retirer des favoris' : 'Ajouter aux favoris';
       if (state.favs && !on) render();
@@ -736,6 +911,11 @@ async function start() {
     .filter((e) => e.sessions.length);
   // mot "à essayer" trouvé dans le titre (gros bonus) ou la description (petit bonus), avec ses accents d'origine
   const discWord = (txt) => { const m = fold(txt).match(DISCOVERY); return m ? (txt || '').substr(m.index, m[0].length).toLowerCase() : ''; };
+  PLACES = (DATA.places || []).map((p) => ({ ...p, sources: p.sources || [] }));
+  for (const p of PLACES) {
+    p._fname = fold(p.name);
+    p._text = fold([p.name, p.kind, KIND[p.kind]?.label, p.detail, p.address, p.city, p.michelin ? 'michelin ' + p.michelin : '', p.terrace ? 'terrasse' : '', p.veg ? 'vegetarien vege' : ''].join(' '));
+  }
   for (const e of EVENTS) {
     e._text = fold([e.title, e.venue, e.city, e.category, e.desc, e.address, e.free ? 'gratuit' : '', e.sources.join(' ')].join(' '));
     e._discT = discWord(e.title);

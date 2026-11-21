@@ -40,6 +40,15 @@ Ensuite on garde ce qui dépasse `THRESHOLD`, et au plus `PER_DAY` sorties par j
 le reste est derrière « + N autres »). Une recherche, une catégorie cochée ou « Mes favoris » passent outre.
 Le bouton **Tout** affiche tout, sans pré-filtre. Goûts, 👎 et favoris restent dans le navigateur (localStorage).
 
+## Lieux & restos
+
+Onglet des endroits **toujours dispo** à tester : restos, bars, cafés, activités (escalade, escape game, bowling,
+trampoline…) et lieux à voir (musées, galeries, parcs, monuments). Sources : **OpenStreetMap** (≈1 500 lieux à
+Toulouse, © les contributeurs OpenStreetMap, ODbL) et le **Guide Michelin** (≈50 restos : étoilés, Bib Gourmand,
+sélection). Pas d'avis clients : la note /10 vient de règles visibles sous chaque fiche (`placeScore` dans `app.js`) —
+Michelin (+2,5 à +4), cuisine à découvrir (+2), activité à tester (+2,5), lieu connu (+1), site web, terrasse,
+végé ; chaîne (−3), très cher €€€€ (−1) ; et tes ⭐ / 👎. Le bouton **✓ Testé** range un lieu dans « déjà testés ».
+
 ## Mon programme
 
 Onglet qui compose une journée pour la période choisie (aujourd'hui, ce week-end, **Week-end pro**, ou un jour
@@ -47,6 +56,8 @@ précis avec « Dates… » ; 4 jours max) : pour chaque jour, la sortie la mieu
 l'**après-midi** et du **soir**, sans doublon, avec 2 autres idées. S'il n'y a rien à heure fixe le matin ou
 l'après-midi, il propose une expo / activité en continu ouverte ce jour-là. 🎲 « Proposer autre chose » tire
 d'autres choix parmi les mieux notées ; 📅 « Tout ajouter à mon agenda » télécharge le programme en .ics.
+Chaque journée finit par une **idée resto** (le mieux noté à moins de 1,5 km de la dernière sortie du jour, −1 point
+par km) et **un verre après** (bar à moins de 900 m du resto), jamais un lieu déjà testé.
 
 ## Comment ça marche
 

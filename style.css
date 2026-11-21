@@ -149,8 +149,9 @@ main { min-width: 0; }
   background: var(--surface); border-radius: 10px; padding: 7px 12px; font-weight: 600;
 }
 .badge { background: var(--accent); color: var(--accent-ink); border-radius: 999px; font-size: 12px; min-width: 20px; padding: 0 6px; text-align: center; }
-.tabs { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; }
-.tabs button { border: 0; background: transparent; border-radius: 8px; padding: 6px 12px; font-weight: 600; color: var(--ink-2); font-size: 14px; }
+.tabs { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button { flex: none; white-space: nowrap; border: 0; background: transparent; border-radius: 8px; padding: 6px 12px; font-weight: 600; color: var(--ink-2); font-size: 14px; }
 .tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
 .tabs .n { font-weight: 500; opacity: .75; margin-left: 2px; }
 .summary { color: var(--ink-2); margin: 12px 2px 6px; font-size: 14px; }
@@ -246,6 +247,21 @@ select { width: 100%; background: var(--bg); border: 1px solid var(--line); bord
 .card__why b.up { color: var(--ok); }
 .card__why b.down { color: var(--warn); }
 .card__why .card__why-total { margin: 8px 0 0; color: var(--ink-2); font-size: 12px; }
+
+/* Lieux & restos */
+.kinds { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px 0 8px; margin-top: 4px; }
+.kinds::-webkit-scrollbar { display: none; }
+.kinds .chip { flex: none; }
+.tested-toggle { margin: 0 0 8px; font-size: 14px; }
+.card__kind { font-size: 22px; line-height: 1; }
+.tag--michelin { background: color-mix(in srgb, #c8102e 14%, transparent); color: #b0102a; }
+:root[data-theme="dark"] .tag--michelin { color: #ff7b8c; }
+.card[data-kind="Resto"] { --c: var(--c-spectacle); }
+.card[data-kind="Bar"] { --c: var(--c-soiree); }
+.card[data-kind="Café"] { --c: var(--c-marche); }
+.card[data-kind="Activité"] { --c: var(--c-atelier); }
+.card[data-kind="Lieu"] { --c: var(--c-visite); }
+.slot--food .slot__label { color: var(--ink-2); }
 
 /* Mon programme */
 .plan__bar { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
