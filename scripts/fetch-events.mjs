@@ -482,7 +482,8 @@ function osmKind(t) {
 
 // Overpass est souvent chargé (erreur 504) : 3 serveurs publics, 2 tours, avec une pause entre les tours
 async function overpass(query) {
-  // serveur principal puis miroirs publics ; 2e tour (après une pause) sur les deux plus fiables
+  // serveur principal puis miroirs publics ; 2e tour (après une pause) sur les deux premiers.
+  // (overpass.openstreetmap.fr n'est pas utilisé : il est réservé à des usages autorisés.)
   const endpoints = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
   let last;
@@ -491,7 +492,8 @@ async function overpass(query) {
     try {
       const r = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'user-agent': UA, 'content-type': 'application/x-www-form-urlencoded' },
+        // identifiant simple : Overpass refuse ceux qui ressemblent à un navigateur ("Mozilla/5.0 …") -> 406
+        headers: { 'user-agent': 'sorties-toulouse/1.0 (agenda perso, lieux rechargés 1 fois par semaine)', 'content-type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(query),
         signal: AbortSignal.timeout(60000),
       });
@@ -507,23 +509,18 @@ async function overpass(query) {
 async function fetchOSM(previous) {
   const out = [];
   const failed = [];
-  const failedKinds = new Set();
+  // chaque lieu garde l'étiquette de son morceau (grp) : un morceau en échec reprend SES lieux de la veille,
+  // donc les morceaux réussis s'additionnent d'un passage à l'autre
+  const prevOSM = (previous?.places || []).filter((p) => (p.sources || [])[0] === 'OpenStreetMap');
   for (const g of OSM_GROUPS) {
     try {
-      for (const el of await overpass(osmQuery(g))) { const p = osmPlace(el); if (p) out.push(p); }
+      for (const el of await overpass(osmQuery(g))) { const p = osmPlace(el); if (p) out.push({ ...p, grp: g.name }); }
     } catch (e) {
-      g.kinds.forEach((k) => failedKinds.add(k));
-      failed.push(`${g.name} : ${e.message}`);
+      const prev = prevOSM.filter((p) => p.grp === g.name);
+      prev.forEach((p) => out.push({ ...p, source: 'OpenStreetMap' }));
+      failed.push(`${g.name} : ${e.message}${prev.length ? ` (${prev.length} repris de la veille)` : ''}`);
     }
     await sleep(3000);
-  }
-  // types en échec : on garde ceux de la veille (pour ces types-là, en entier : pas de doublons ouest/est)
-  for (const k of failedKinds) {
-    const prev = (previous?.places || []).filter((p) => (p.sources || [])[0] === 'OpenStreetMap' && p.kind === k);
-    if (!prev.length) continue; // rien de la veille : on garde au moins la moitié récupérée
-    for (let i = out.length - 1; i >= 0; i--) if (out[i].kind === k) out.splice(i, 1);
-    prev.forEach((p) => out.push({ ...p, source: 'OpenStreetMap' }));
-    failed.push(`${prev.length} « ${k} » repris de la veille`);
   }
   osmComplete = failed.length === 0;
   if (failed.length) console.warn(`  OpenStreetMap incomplet — ${failed.join(' ; ')}`);
