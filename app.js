@@ -217,7 +217,11 @@ function card(e, ss, ongoing = false, sc = 0) {
   const url = safeUrl(e.url);
   const img = safeUrl(e.image);
   const place = [e.venue, e.city && e.city !== e.venue ? e.city : ''].filter(Boolean).join(' · ');
-  const mapQ = encodeURIComponent([e.venue, e.address, e.city].filter(Boolean).join(', '));
+  // Google Maps sur le lieu (nom + adresse + ville ; sinon les coordonnées). Sur téléphone, ouvre l'appli Maps.
+  const cityPart = e.city && !fold(`${e.venue} ${e.address}`).includes(fold(e.city)) ? e.city : '';
+  const mapText = [e.venue, e.address, cityPart].filter(Boolean).join(', ');
+  const mapUrl = 'https://www.google.com/maps/search/?api=1&query=' +
+    encodeURIComponent(mapText || (e.lat != null && e.lon != null ? `${e.lat},${e.lon}` : 'Toulouse'));
   const last = e.sessions[e.sessions.length - 1][1];
   let when;
   if (ongoing) when = `<span class="card__time"><small>jusqu'au</small>${esc(fmtDM.format(toDate(last)))}</span>`;
@@ -238,7 +242,7 @@ function card(e, ss, ongoing = false, sc = 0) {
     <div class="card__when">${when}</div>
     <div class="card__body">
       <h3>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(e.title)}</a>` : esc(e.title)}</h3>
-      ${place ? `<p class="card__meta">${esc(place)}</p>` : ''}
+      ${place ? `<p class="card__meta"><a class="maplink" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps">${ICON.pin}<span>${esc(place)}</span></a></p>` : ''}
       ${e.desc ? `<p class="card__desc">${esc(e.desc)}</p>` : ''}
     </div>
     ${img ? `<img class="card__thumb" src="${esc(img)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
@@ -248,7 +252,7 @@ function card(e, ss, ongoing = false, sc = 0) {
         <button class="icon-btn" data-act="nope" title="Pas pour moi : masquer et voir moins de ce genre" aria-label="Pas pour moi">${ICON.nope}</button>
         <button class="icon-btn${fav ? ' on' : ''}" data-act="fav" title="${fav ? 'Retirer des favoris' : 'Ajouter aux favoris'}" aria-pressed="${fav}" aria-label="Favori">${ICON.star}</button>
         <button class="icon-btn" data-act="ics" title="Ajouter à mon agenda" aria-label="Ajouter à mon agenda">${ICON.cal}</button>
-        <a class="icon-btn" href="https://www.google.com/maps/search/?api=1&query=${mapQ}" target="_blank" rel="noopener" title="Voir sur la carte" aria-label="Voir sur la carte">${ICON.pin}</a>
+        <a class="icon-btn" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps" aria-label="Ouvrir dans Google Maps">${ICON.pin}</a>
       </div>
     </div>
   </article>`;
@@ -422,7 +426,26 @@ function icsFor(e) {
 
 function update(fn) { fn(); limit = PAGE; expandedDays.clear(); render(); }
 
+// Accueil : retour à la vue de départ (ce week-end, Sélection, aucun filtre), en haut de page
+function goHome() {
+  update(() => Object.assign(state, {
+    when: 'weekend', from: '', to: '', q: '', cats: new Set(), sources: new Set(), city: '', moment: '',
+    free: false, kids: false, favs: false, hideFull: false, tab: 'events', pick: 'best',
+  }));
+  $('#filters').classList.remove('open');
+  $('#filtersBtn').setAttribute('aria-expanded', 'false');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function setTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('sorties-theme', t); } catch { /* navigation privée */ }
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', t === 'dark' ? '#161211' : '#faf6f2');
+}
+
 function bind() {
+  $('#homeBtn').addEventListener('click', (ev) => { ev.preventDefault(); goHome(); });
+  $('#themeBtn').addEventListener('click', () => setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
   $('#when').addEventListener('click', (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
     update(() => { state.when = b.dataset.when; });

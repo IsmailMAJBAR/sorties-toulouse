@@ -6,8 +6,16 @@
   <title>Sorties Toulouse</title>
   <meta name="description" content="Tout ce qui se passe à Toulouse au même endroit : concerts, spectacles, expos, ateliers, bons plans du week-end. Mis à jour chaque jour.">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="theme-color" content="#faf6f2" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#161211" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#faf6f2">
+  <script>
+    // mode clair par défaut ; le bouton thème (en haut à droite) bascule en sombre et s'en souvient
+    (function () {
+      var t = 'light';
+      try { if (localStorage.getItem('sorties-theme') === 'dark') t = 'dark'; } catch (e) { /* stockage bloqué */ }
+      document.documentElement.setAttribute('data-theme', t);
+      if (t === 'dark') document.querySelector('meta[name=theme-color]').setAttribute('content', '#161211');
+    })();
+  </script>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c4513f'/%3E%3Cpath d='M9 22V12l7-4 7 4v10h-4v-6h-6v6z' fill='%23fff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -27,6 +35,8 @@
 
   <header class="top">
     <div class="top__inner">
+      <a class="tbtn home" id="homeBtn" href="./" aria-label="Accueil" title="Accueil : ce week-end, en Sélection, sans filtre"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 7.6 8 2.3l6.2 5.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.6 6.3v7.2h3.3V10h2.2v3.5h3.3V6.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span class="lbl">Accueil</span></a>
+      <button class="tbtn theme" id="themeBtn" type="button" aria-label="Basculer thème clair ou sombre" title="Thème clair / sombre"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" stroke="none"/></svg></button>
       <div class="brand">
         <h1>Sorties <span>Toulouse</span></h1>
         <p class="brand__sub" id="updated">Chargement…</p>
