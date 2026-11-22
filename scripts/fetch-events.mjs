@@ -801,7 +801,9 @@ async function fetchWecandoo() {
 
 // ---------- piscines (données ouvertes de Toulouse Métropole) et baignade l'été (OpenStreetMap) ----------
 
+let piscinesComplete = false; // vrai si les lacs / parcs aquatiques (OpenStreetMap) ont aussi répondu
 async function fetchPiscines() {
+  piscinesComplete = false;
   const out = new Map();
   const d = await get('https://data.toulouse-metropole.fr/api/explore/v2.1/catalog/datasets/piscines/records?limit=100', { json: true });
   for (const r of d.results || []) {
@@ -832,7 +834,8 @@ async function fetchPiscines() {
         url: t.website || t['contact:website'] || '', outdoor: t.leisure !== 'water_park', source: 'Piscines',
       });
     }
-  } catch { /* les piscines suffisent */ }
+    piscinesComplete = true;
+  } catch (e) { console.warn(`  Piscines : baignades OpenStreetMap indisponibles (${e.message}), réessai au prochain passage`); }
   return [...out.values()];
 }
 
@@ -865,7 +868,7 @@ async function fetchDeals() {
 // (Le Guide Michelin a été essayé : il renvoie une page anti-robots aux serveurs de GitHub. On ne la contourne
 // pas, donc il n'est pas dans les sources. Le lien 📍 de chaque fiche ouvre Google Maps et ses avis.)
 const PLACE_SOURCES = [
-  { name: 'Piscines', site: 'https://data.toulouse-metropole.fr/explore/dataset/piscines/', run: fetchPiscines, complete: () => true },
+  { name: 'Piscines', site: 'https://data.toulouse-metropole.fr/explore/dataset/piscines/', run: fetchPiscines, complete: () => piscinesComplete },
   { name: 'OpenStreetMap', site: 'https://www.openstreetmap.org/#map=13/43.6045/1.4440', run: fetchOSM, complete: () => osmComplete },
   { name: 'Funbooker', site: FUNBOOKER, run: fetchFunbooker, complete: () => true },
   { name: 'Wecandoo', site: 'https://wecandoo.fr/ateliers/toulouse', run: fetchWecandoo, complete: () => true },
