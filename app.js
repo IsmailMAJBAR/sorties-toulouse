@@ -62,7 +62,7 @@ const TOP_VENUES = /zenith|bikini|metronum|capitole|halle aux grains|garonne|sor
 // ---------- état (synchronisé avec l'adresse de la page, pour partager une recherche) ----------
 
 const state = {
-  when: 'weekend', from: '', to: '', q: '', cats: new Set(), sources: new Set(),
+  when: 'weekend', shift: 0, from: '', to: '', q: '', cats: new Set(), sources: new Set(),
   city: '', moment: '', free: false, kids: false, favs: false, hideFull: false, try: false, tab: 'events', pick: 'best',
 };
 const TOGGLES = ['try', 'free', 'kids', 'favs', 'hideFull'];
@@ -114,7 +114,11 @@ const fmtPts = (v) => (v > 0 ? '+' : '−') + fmtNote(Math.abs(v));
 
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
-  if (p.has('when')) state.when = p.get('when');
+  state.when = p.get('when') || 'weekend';
+  state.shift = Math.max(0, parseInt(p.get('sh') || '0', 10) || 0);
+  // anciens liens : "week-end pro" / "semaine pro" = la période d'après
+  if (state.when === 'nextweekend') { state.when = 'weekend'; state.shift += 1; }
+  if (state.when === 'nextweek') { state.when = '7days'; state.shift += 1; }
   state.from = p.get('from') || ''; state.to = p.get('to') || '';
   state.q = p.get('q') || '';
   state.cats = new Set((p.get('cat') || '').split(',').filter(Boolean));
@@ -122,7 +126,7 @@ function readHash() {
   state.city = p.get('city') || '';
   state.moment = p.get('m') || '';
   state.free = p.has('free'); state.kids = p.has('kids'); state.favs = p.has('fav'); state.hideFull = p.has('nofull');
-  state.tab = ['ongoing', 'plan', 'places'].includes(p.get('tab')) ? p.get('tab') : 'events';
+  state.tab = ['ongoing', 'plan', 'dates', 'places'].includes(p.get('tab')) ? p.get('tab') : 'events';
   state.pkind = p.get('pk') || '';
   state.pick = p.has('all') ? 'all' : 'best';
   state.try = p.has('try');
@@ -130,6 +134,7 @@ function readHash() {
 function writeHash() {
   const p = new URLSearchParams();
   if (state.when !== 'weekend') p.set('when', state.when);
+  if (state.shift) p.set('sh', String(state.shift));
   if (state.when === 'custom') { if (state.from) p.set('from', state.from); if (state.to) p.set('to', state.to); }
   if (state.q) p.set('q', state.q);
   if (state.cats.size) p.set('cat', [...state.cats].join(','));
@@ -158,17 +163,14 @@ function range() {
     case 'today': return [t, t];
     case 'tomorrow': return [addDays(t, 1), addDays(t, 1)];
     case 'weekend': {
+      const k = state.shift || 0; // 0 = ce week-end, 1 = le suivant, …
+      const sat = dow === 0 ? addDays(t, -1) : addDays(t, 6 - dow); // samedi de "ce week-end"
+      if (k > 0) return [addDays(sat, 7 * k - 1), addDays(sat, 7 * k + 1)]; // vendredi → dimanche
       if (dow === 6) return [t, addDays(t, 1)];
       if (dow === 0) return [t, t];
-      const fri = addDays(t, 5 - dow);
-      return [fri, addDays(fri, 2)];
+      return [addDays(sat, -1), addDays(sat, 1)];
     }
-    case 'nextweekend': { // le week-end d'après "Ce week-end" : samedi + dimanche
-      const sat = dow === 0 ? addDays(t, -1) : addDays(t, 6 - dow); // samedi de "ce week-end"
-      return [addDays(sat, 7), addDays(sat, 8)];
-    }
-    case '7days': return [t, addDays(t, 6)];
-    case 'nextweek': { const mon = addDays(t, ((8 - dow) % 7) || 7); return [mon, addDays(mon, 6)]; }
+    case '7days': { const k = state.shift || 0; return [addDays(t, 7 * k), addDays(t, 7 * k + 6)]; }
     case '30days': return [t, addDays(t, 29)];
     case 'custom': {
       const a = state.from ? toDate(state.from) : t;
@@ -181,6 +183,32 @@ function range() {
 function rangeLabel([a, b]) {
   if (ymd(a) === ymd(b)) return fmtShort.format(a);
   return `${fmtShort.format(a)} → ${fmtShort.format(b)}`;
+}
+// nom de la période affichée, avec les vraies dates : "Week-end prochain · ven. 4 → dim. 6 déc."
+function periodName() {
+  const k = state.shift || 0;
+  const [a] = range();
+  switch (state.when) {
+    case 'today': return "Aujourd'hui";
+    case 'tomorrow': return 'Demain';
+    case 'weekend': return k === 0 ? 'Ce week-end' : k === 1 ? 'Week-end prochain' : `Week-end dans ${k} semaines`;
+    case '7days': return k === 0 ? '7 prochains jours' : k === 1 ? 'La semaine d\'après' : `Semaine dans ${k} semaines`;
+    case 'custom': { const r = relDay(ymd(a)); return r ? r[0].toUpperCase() + r.slice(1) : 'Date choisie'; }
+    case '30days': return '30 prochains jours';
+    default: return 'Tout le programme';
+  }
+}
+// ‹ › : période précédente / suivante (même durée ; un week-end avance d'une semaine)
+function shiftPeriod(dir) {
+  if (state.when === 'weekend' || state.when === '7days') { state.shift = Math.max(0, (state.shift || 0) + dir); return; }
+  const [a, b] = range();
+  const len = Math.round((b - a) / 864e5) + 1;
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  let na = addDays(a, dir * len);
+  if (na < t) na = t;
+  state.when = 'custom';
+  state.from = ymd(na);
+  state.to = len > 1 ? ymd(addDays(na, len - 1)) : '';
 }
 function relDay(d) {
   const t = new Date(); t.setHours(0, 0, 0, 0);
@@ -315,16 +343,8 @@ function render() {
 
   const punctual = rows.filter((r) => !r.e.continuous);
   const ongoing = rows.filter((r) => r.e.continuous);
-  // nombre affiché dans l'onglet = ce que montre vraiment la liste (avec la limite par jour de la Sélection)
-  const perDay = {};
-  for (const { sess } of punctual) for (const d of new Set(sess.map((s) => (sday(s[0]) < from ? from : sday(s[0]))))) perDay[d] = (perDay[d] || 0) + 1;
-  const shownCount = Object.entries(perDay).reduce((n, [d, c]) => n + (picking && !expandedDays.has(d) ? Math.min(c, PER_DAY) : c), 0);
-  $('#tabEvents').innerHTML = `Au programme <span class="n">${shownCount}</span>`;
-  $('#tabOngoing').innerHTML = `En continu <span class="n">${ongoing.length}</span>`;
-  $$('.tabs [role=tab]').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === state.tab)));
-
   const list = $('#list');
-  const label = state.when === 'all' ? 'Tout le programme' : `${WHEN_LABEL[state.when]} · ${rangeLabel([a, b])}`;
+  const label = `${periodName()} · ${rangeLabel([a, b])}`;
   let html = '';
   let shown = 0, total = 0;
 
@@ -376,9 +396,14 @@ function render() {
     html = plan.html;
     total = shown = plan.count;
     $('#summary').innerHTML = `<strong>Mon programme</strong> — ${esc(label)}${plan.cut ? ' (4 premiers jours)' : ''} · la mieux notée par créneau, sans doublon${pickNote}`;
+  } else if (state.tab === 'dates') {
+    const ideas = buildDates(punctual, a, b);
+    html = ideas.html;
+    total = shown = ideas.count || -1;
+    $('#summary').innerHTML = `<strong>💕 Idées date</strong> — ${esc(label)} · une sortie à deux, un resto à côté, puis un verre`;
   } else {
     total = ongoing.length;
-    $('#summary').innerHTML = `<strong>${total} expo${total > 1 ? 's' : ''} &amp; activités en continu</strong> — ${esc(label)} · ${picking ? 'les mieux notées en premier' : 'les plus proches de la fin en premier'}${pickNote}`;
+    $('#summary').innerHTML = `<button class="link" type="button" data-goto="events">← Agenda</button> · <strong>${total} expo${total > 1 ? 's' : ''} &amp; activités en continu</strong> — ${esc(label)} · ${picking ? 'les mieux notées en premier' : 'les plus proches de la fin en premier'}${pickNote}`;
     const end = (r) => r.e.sessions[r.e.sessions.length - 1][1];
     const items = ongoing.sort((x, y) => (picking ? y.score - x.score : 0) || end(x).localeCompare(end(y)));
     html += '<div class="cards">';
@@ -426,6 +451,9 @@ function placeScore(p) {
   if (p.kind === 'Lieu' && p.notable) add(1, 'Lieu connu (fiche Wikipédia)');
   if (p.kind === 'Bar' && /cocktails|brasserie artisanale/.test(p.detail || '')) add(1, `Bar : ${p.detail}`);
   add(p.url ? 0.5 : -0.5, p.url ? 'A un site web' : 'Pas de site web');
+  if (p.thin) add(-2, 'Peu d\'infos : ni prix, ni avis, ni adresse (tout est sur la page de l\'atelier)');
+  if (/team building|equipe|seminaire/.test(p._fname)) add(-2, 'Pensé pour les équipes (team building)');
+  if (/\benfants?\b|\bkids\b/.test(p._fname) && !state.kids) add(-1.5, 'Pensé pour les enfants');
   if (p.hours) add(0.3, 'Horaires renseignés');
   if (p.terrace) add(0.3, 'Terrasse');
   if (p.veg) add(0.3, 'Options végé');
@@ -455,6 +483,7 @@ function placeCard(p, sc, why, near = '') {
   const kind = KIND[p.kind];
   const info = [p.detail, p.price].filter(Boolean).join(' · ');
   const isTested = tested.has(p.id), fav = favs.has(p.id);
+  const noLoc = p.lat == null && !p.address; // ex. Wecandoo : l'adresse n'est que sur leur page
   const tags = [
     sc >= TOP ? '<span class="tag tag--top">Top</span>' : '',
     `<span class="tag tag--cat">${esc(kind.label.replace(/s$/, '').replace('Lieux à voi', 'Lieu à voir'))}</span>`,
@@ -462,7 +491,7 @@ function placeCard(p, sc, why, near = '') {
     p.terrace ? '<span class="tag">Terrasse</span>' : '',
     p.veg ? '<span class="tag">Végé</span>' : '',
     p.fbRating ? `<span class="tag tag--rating">★ ${esc(p.fbRating.toLocaleString('fr-FR', { maximumFractionDigits: 1 }))} · ${esc(p.fbReviews)} avis</span>` : '',
-    p.sources.includes('Funbooker') ? `<a class="tag tag--src" href="${esc(safeUrl(p.url) || '#')}" target="_blank" rel="noopener">Réserver sur Funbooker</a>` : '',
+    ['Funbooker', 'Wecandoo'].includes(p.sources[0]) ? `<a class="tag tag--src" href="${esc(safeUrl(p.url) || '#')}" target="_blank" rel="noopener">Réserver sur ${esc(p.sources[0])}</a>` : '',
     isTested ? '<span class="tag tag--free">Testé ✓</span>' : '',
     p.michelinUrl && p.url ? `<a class="tag tag--src" href="${esc(p.michelinUrl)}" target="_blank" rel="noopener">fiche Michelin</a>` : '',
   ].join('');
@@ -471,7 +500,9 @@ function placeCard(p, sc, why, near = '') {
     <div class="card__body">
       <h3>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)}</h3>
       ${info ? `<p class="card__meta">${esc(info[0].toUpperCase() + info.slice(1))}</p>` : ''}
-      <p class="card__meta"><a class="maplink" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps">${ICON.pin}<span>${esc(p.address || 'Voir sur la carte')}${near ? ` · ${esc(near)}` : ''}</span></a></p>
+      ${noLoc
+        ? `<p class="card__meta"><a class="maplink" href="${esc(url || '#')}" target="_blank" rel="noopener">${ICON.pin}<span>Adresse et dates sur ${esc(p.sources[0] || 'le site')}</span></a></p>`
+        : `<p class="card__meta"><a class="maplink" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps">${ICON.pin}<span>${esc(p.address || 'Voir sur la carte')}${near ? ` · ${esc(near)}` : ''}</span></a></p>`}
       ${p.desc ? `<p class="card__desc">${esc(p.desc)}</p>` : ''}
     </div>
     ${safeUrl(p.image) ? `<img class="card__thumb" src="${esc(p.image)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
@@ -481,7 +512,7 @@ function placeCard(p, sc, why, near = '') {
         <button class="icon-btn" data-act="nope" title="Pas pour moi : masquer et voir moins de ce genre" aria-label="Pas pour moi">${ICON.nope}</button>
         <button class="icon-btn${fav ? ' on' : ''}" data-act="fav" title="${fav ? 'Retirer des favoris' : 'Ajouter aux favoris'}" aria-pressed="${fav}" aria-label="Favori">${ICON.star}</button>
         <button class="icon-btn${isTested ? ' on' : ''}" data-act="tested" title="${isTested ? 'Pas encore testé finalement' : "J'ai testé"}" aria-pressed="${isTested}" aria-label="Testé">${ICON.check}</button>
-        <a class="icon-btn" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps" aria-label="Ouvrir dans Google Maps">${ICON.pin}</a>
+        ${noLoc ? '' : `<a class="icon-btn" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps" aria-label="Ouvrir dans Google Maps">${ICON.pin}</a>`}
       </div>
     </div>
     ${note.panel}
@@ -525,15 +556,116 @@ function renderPlaces(picking) {
 function bestNear(anchor, kind, maxM, exclude) {
   const out = [];
   for (const p of PLACES) {
-    if (p.kind !== kind || hidden.has(p.id) || tested.has(p.id) || exclude.has(p.id)) continue;
+    if (p.kind !== kind || !p.name || p.lat == null || hidden.has(p.id) || tested.has(p.id) || exclude.has(p.id)) continue;
     const d = distM(anchor, p);
     if (d > maxM) continue;
     const sc = placeScore(p);
+    if (sc.s < 0.5) continue; // pas de suggestion sous 5,5/10
     out.push({ p, s: sc.s, why: sc.why, d, rank: sc.s - d / 1000 });
   }
   out.sort((a, b) => b.rank - a.rank);
   const top = out.slice(0, 3);
   return top.length ? top[planSeed % top.length] : null;
+}
+
+// ---------- Idées date (un rendez-vous à deux) : une sortie + un resto à côté + un verre ----------
+
+const DATE_CATS = new Set(['Concert', 'Spectacle', 'Humour', 'Expo', 'Cinéma', 'Festival', 'Soirée']);
+// ce qui rend une sortie sympa à deux… et ce qui ne l'est pas du tout
+const DATE_GOOD = /\b(duo|a deux|en couple|amoureux|saint[- ]valentin|degustation|cocktails?|mixologie|vins?|oenolog\w*|croisiere|bateau|peniche|guinguette|jazz|piano|acoustique|candlelight|bougies|rooftop|coucher de soleil|chocolat|parfum|poterie|ceramique|cours de cuisine|patisserie|escape game|salsa|tango|bachata|swing|planetarium|etoiles|cabaret|theatre|stand ?up|comedy|impro|opera|ballet|concert|spectacle)\b/;
+const DATE_BAD = /\b(enfants?|jeune public|en famille|bebes?|tout[- ]petits|seniors?|conference|reunion|team building|equipe|formation|loto|vide[- ]grenier)\b/;
+
+function dateBonus(text, kids) {
+  const why = [];
+  let s = 0;
+  const g = text.match(DATE_GOOD);
+  if (g) { s += 2; why.push([2, `Sympa à deux : « ${g[0]} »`]); }
+  const bad = text.match(DATE_BAD);
+  if (bad || kids) { s -= 5; why.push([-5, `Pas vraiment un date : « ${bad ? bad[0] : 'pour les enfants'} »`]); }
+  return { s, why };
+}
+
+// une ligne compacte pour le resto / le bar d'une idée
+function miniPlace(icon, label, x) {
+  const p = x.p;
+  const url = safeUrl(p.url) || safeUrl(p.michelinUrl);
+  const mapUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent([p.name, p.address, p.city || 'Toulouse'].filter(Boolean).join(', '));
+  const info = [p.detail, p.price, x.d != null ? fmtDist(x.d) : ''].filter(Boolean).join(' · ');
+  return `<li class="mini" data-id="${esc(p.id)}"><span class="mini__icon" aria-hidden="true">${icon}</span>
+    <span class="mini__body"><small>${esc(label)}</small>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)}
+    <span class="mini__info">${esc(info)} · ${fmtNote(note10(x.s))}/10</span></span>
+    <a class="icon-btn" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps" aria-label="Ouvrir dans Google Maps">${ICON.pin}</a></li>`;
+}
+
+function foodAndDrink(anchor, usedPlaces) {
+  const at = anchor || { lat: 43.6045, lon: 1.4440 };
+  const out = [];
+  const food = bestNear(at, 'Resto', 1200, usedPlaces);
+  if (food) { usedPlaces.add(food.p.id); out.push(miniPlace('🍽️', anchor ? 'Pour manger à côté' : 'Pour manger (centre-ville)', food)); }
+  const drink = bestNear(food ? food.p : at, 'Bar', 800, usedPlaces);
+  if (drink) { usedPlaces.add(drink.p.id); out.push(miniPlace('🍸', 'Un verre après', drink)); }
+  return out.length ? `<ul class="idea__more">${out.join('')}</ul>` : '';
+}
+
+function buildDates(punctual, a, b) {
+  const usedPlaces = new Set();
+  // 1. sorties datées de la période, l'après-midi ou le soir, notées "à deux"
+  const cands = [];
+  for (const r of punctual) {
+    const txt = r.e._text;
+    if (!DATE_CATS.has(r.e.category) && !DATE_GOOD.test(txt)) continue;
+    const ss = r.sess.filter((s) => { const h = time(s[0]); return h && h !== '00:00' && h >= '14:00'; });
+    if (!ss.length) continue;
+    const bonus = dateBonus(txt, r.e.kids);
+    const s = r.score + bonus.s;
+    if (s < THRESHOLD) continue;
+    cands.push({ ...r, ss: [ss[0]], s, why: [...r.why, ...bonus.why] });
+  }
+  cands.sort((x, y) => y.s - x.s);
+  // jusqu'à 5 idées, 2 par jour max, en tournant avec 🎲 parmi les meilleures
+  const perDay = {};
+  const picked = [];
+  const pool = cands.slice(planSeed % 3);
+  for (const c of pool) {
+    const d = sday(c.ss[0][0]);
+    if ((perDay[d] || 0) >= 2) continue;
+    perDay[d] = (perDay[d] || 0) + 1;
+    picked.push(c);
+    if (picked.length >= 5) break;
+  }
+  picked.sort((x, y) => x.ss[0][0].localeCompare(y.ss[0][0]));
+
+  let html = `<div class="plan__bar"><button class="more" type="button" data-reroll>🎲 D'autres idées</button></div>`;
+  html += '<section class="day"><h2 class="day__head">💕 Une sortie à deux, puis resto et verre</h2>';
+  if (!picked.length) html += '<p class="slot__empty">Pas de sortie « à deux » bien notée sur cette période : essaie une autre période, ou les idées sans date plus bas.</p>';
+  picked.forEach((c, i) => {
+    const when = `${fmtShort.format(toDate(c.ss[0][0]))} · ${fmtH(time(c.ss[0][0]))}`;
+    const anchor = c.e.lat != null && !/multi|plusieurs lieux|divers lieux/i.test(c.e.venue || '') ? { lat: c.e.lat, lon: c.e.lon } : null;
+    html += `<article class="idea"><p class="idea__head"><span class="idea__n">Idée ${i + 1}</span> ${esc(when)}</p>${card(c.e, c.ss, false, c.s, c.why)}${foodAndDrink(anchor, usedPlaces)}</article>`;
+  });
+  html += '</section>';
+
+  // 2. sans date fixe : activités à réserver à deux (atelier cocktails, poterie, dégustation, escape game…)
+  const acts = [];
+  for (const p of PLACES) {
+    if (p.kind !== 'Activité' || hidden.has(p.id) || tested.has(p.id)) continue;
+    const txt = fold(`${p.name} ${p.detail || ''} ${p.desc || ''}`);
+    if (!DATE_GOOD.test(txt)) continue;
+    const sc = placeScore(p);
+    const bonus = dateBonus(txt, false);
+    acts.push({ p, s: sc.s + bonus.s, why: [...sc.why, ...bonus.why] });
+  }
+  acts.sort((x, y) => y.s - x.s);
+  const top = acts.slice((planSeed * 3) % Math.max(1, Math.min(acts.length, 12))).slice(0, 3);
+  if (top.length) {
+    html += '<section class="day"><h2 class="day__head">💕 À réserver quand vous voulez</h2>';
+    top.forEach((x) => {
+      const anchor = x.p.lat != null ? { lat: x.p.lat, lon: x.p.lon } : null;
+      html += `<article class="idea">${placeCard(x.p, x.s, x.why)}${anchor ? foodAndDrink(anchor, usedPlaces) : ''}</article>`;
+    });
+    html += '</section>';
+  }
+  return { html, count: picked.length + top.length };
 }
 
 // ---------- Mon programme : pour chaque jour, la mieux notée du matin, de l'après-midi et du soir ----------
@@ -629,10 +761,20 @@ function renderCats(counts) {
 function syncControls() {
   $$('#when button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.when === state.when)));
   $('#custom').hidden = state.when !== 'custom';
-  if (state.when === 'custom') { const [a, b] = range(); $('#from').value = ymd(a); $('#to').value = ymd(b); }
+  if (state.when === 'custom') { const [a] = range(); $('#from').value = ymd(a); $('#to').value = state.to || ''; }
+  // menu principal + période (pas de période pour les lieux, toujours dispo)
+  $$('.mainnav [role=tab]').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === state.tab || (t.dataset.tab === 'events' && state.tab === 'ongoing'))));
+  $('#period').hidden = state.tab === 'places';
+  // sur téléphone, le menu défile de côté : on garde la rubrique active visible
+  const nav = $('.mainnav'), cur = nav.querySelector('[aria-selected="true"]');
+  if (cur && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, cur.offsetLeft - nav.offsetLeft - 16);
+  const [ra, rb] = range();
+  $('#rangeLabel').innerHTML = `<strong>${esc(periodName())}</strong> · ${esc(rangeLabel([ra, rb]))}`;
+  const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  $('#prev').disabled = ra <= t0;
+  $('#pickBox').checked = state.pick === 'best';
   if ($('#q').value !== state.q) $('#q').value = state.q;
   $$('#moment button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.m === state.moment)));
-  $$('#pick button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.pick === state.pick)));
   renderTastes();
   for (const k of TOGGLES) $('#' + k).checked = state[k];
   $('#city').value = state.city;
@@ -720,7 +862,7 @@ function update(fn) { fn(); limit = PAGE; expandedDays.clear(); render(); }
 // Accueil : retour à la vue de départ (ce week-end, Sélection, aucun filtre), en haut de page
 function goHome() {
   update(() => Object.assign(state, {
-    when: 'weekend', from: '', to: '', q: '', cats: new Set(), sources: new Set(), city: '', moment: '',
+    when: 'weekend', shift: 0, from: '', to: '', q: '', cats: new Set(), sources: new Set(), city: '', moment: '',
     free: false, kids: false, favs: false, hideFull: false, try: false, tab: 'events', pick: 'best',
   }));
   $('#filters').classList.remove('open');
@@ -739,10 +881,16 @@ function bind() {
   $('#themeBtn').addEventListener('click', () => setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
   $('#when').addEventListener('click', (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
-    update(() => { state.when = b.dataset.when; });
-    if (state.when === 'custom') $('#from').focus();
+    update(() => {
+      state.when = b.dataset.when; state.shift = 0;
+      if (state.when === 'custom' && !state.from) { state.from = ymd(new Date()); state.to = ''; }
+    });
+    if (state.when === 'custom') { try { $('#from').showPicker(); } catch { $('#from').focus(); } }
   });
   for (const id of ['from', 'to']) $('#' + id).addEventListener('change', () => update(() => { state.from = $('#from').value; state.to = $('#to').value; }));
+  $('#prev').addEventListener('click', () => update(() => shiftPeriod(-1)));
+  $('#next').addEventListener('click', () => update(() => shiftPeriod(1)));
+  $('#pickBox').addEventListener('change', (ev) => update(() => { state.pick = ev.target.checked ? 'best' : 'all'; }));
   let t;
   $('#q').addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => update(() => { state.q = $('#q').value.trim(); }), 160); });
   $('#cats').addEventListener('click', (ev) => {
@@ -754,8 +902,11 @@ function bind() {
     update(() => { const s = b.dataset.src; state.sources.has(s) ? state.sources.delete(s) : state.sources.add(s); });
   });
   $('#moment').addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (b) update(() => { state.moment = b.dataset.m; }); });
-  $('#pick').addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (b) update(() => { state.pick = b.dataset.pick; }); });
-  $('#summary').addEventListener('click', (ev) => { if (ev.target.closest('[data-pickall]')) update(() => { state.pick = 'all'; }); });
+  $('#summary').addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-pickall]')) update(() => { state.pick = 'all'; });
+    const go = ev.target.closest('[data-goto]');
+    if (go) update(() => { state.tab = go.dataset.goto; });
+  });
   $('#tastes').addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-v]'); if (!b) return;
     tastes[b.closest('.tri').dataset.cat] = b.dataset.v;
@@ -773,7 +924,7 @@ function bind() {
   $('#reset').addEventListener('click', () => update(() => {
     Object.assign(state, { q: '', cats: new Set(), sources: new Set(), city: '', moment: '', free: false, kids: false, favs: false, hideFull: false, try: false });
   }));
-  $$('.tabs [role=tab]').forEach((tab) => tab.addEventListener('click', () => update(() => { state.tab = tab.dataset.tab; })));
+  $$('.mainnav [role=tab]').forEach((tab) => tab.addEventListener('click', () => update(() => { state.tab = tab.dataset.tab; })));
   $('#filtersBtn').addEventListener('click', () => {
     const open = $('#filters').classList.toggle('open');
     $('#filtersBtn').setAttribute('aria-expanded', String(open));
@@ -835,8 +986,11 @@ function bind() {
   });
 
   window.addEventListener('hashchange', () => { readHash(); limit = PAGE; render(); });
-  const setTop = () => document.documentElement.style.setProperty('--top-h', $('.top').offsetHeight + 'px');
+  // hauteur de la barre du haut quand elle reste collée (ordinateur) ; 0 sur téléphone où elle défile
+  const setTop = () => document.documentElement.style.setProperty('--top-h',
+    (getComputedStyle($('.top')).position === 'sticky' ? $('.top').offsetHeight : 0) + 'px');
   new ResizeObserver(setTop).observe($('.top'));
+  window.addEventListener('resize', setTop);
   setTop();
 }
 

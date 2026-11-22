@@ -59,6 +59,22 @@ Les lieux sont rechargés **une fois par semaine**, source par source (`FORCE_PL
 `FORCE_PLACES=Funbooker` pour une seule source).
 Pas de note Google intégrée : le lien 📍 de chaque fiche ouvre le lieu dans Google Maps, avec ses avis.
 
+## Navigation
+
+- **4 rubriques** en haut : 📅 Agenda · ✨ Mon programme · 💕 Idées date · 📍 Lieux & restos
+  (les expos « en continu » sont dans l'Agenda, via le bandeau).
+- **Période** : Aujourd'hui · Demain · Week-end · Semaine · 📅 Choisir une date, puis **‹ ›** pour passer à la
+  période d'avant / d'après, avec les vraies dates affichées (« Week-end prochain · ven. 27 → dim. 29 nov. »).
+- Le pré-filtre **Sélection** est une case dans les Filtres (cochée par défaut).
+
+## Idées date (un rendez-vous à deux)
+
+Pour la période choisie : jusqu'à 5 sorties qui se prêtent à un date (concert, spectacle, humour, jazz,
+dégustation, croisière… ; jamais les trucs pour enfants, conférences, team building), chacune avec **le meilleur
+resto à moins de 1,2 km** et **un bar à moins de 800 m** du resto (au moins 5,5/10, jamais un lieu déjà testé).
+En dessous, des **activités à réserver quand vous voulez** (ateliers cocktails, poterie, cours de cuisine…).
+🎲 propose d'autres combinaisons.
+
 ## Mon programme
 
 Onglet qui compose une journée pour la période choisie (aujourd'hui, ce week-end, **Week-end pro**, ou un jour

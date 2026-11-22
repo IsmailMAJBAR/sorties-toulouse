@@ -620,11 +620,80 @@ async function fetchFunbooker() {
   return out;
 }
 
+// ---------- Wecandoo : ateliers avec des artisans (version légère) ----------
+// Les fiches Wecandoo se construisent en JavaScript (rien de lisible dans la page) ; leur plan du site, public
+// et fait pour les moteurs de recherche, liste les ateliers. On n'en tire que le nom et le lien :
+// ni prix, ni avis, ni adresse (ils sont sur la page Wecandoo).
+
+const WECANDOO_SITEMAP = 'https://wecandoo.fr/sitemap.xml';
+// premier mot qui n'est PAS le prénom de l'artisan
+const WC_NOT_NAME = new Set(['artisan', 'atelier', 'bijoux', 'bijou', 'bijouterie', 'bijoutier', 'metal', 'cuir', 'couteau', 'vitrail',
+  'tomme', 'produits', 'mozzarella', 'famille', 'deux', 'couverts', 'cosmetique', 'biere', 'abat', 'bois', 'boire', 'accords',
+  'apiculture', 'art', 'assemblage', 'bagues', 'banc', 'poterie', 'ceramique', 'cuisine', 'patisserie', 'parfum', 'bougie',
+  'savon', 'tissage', 'couture', 'broderie', 'macrame', 'tufting', 'photo', 'photographie', 'vin', 'cafe', 'the', 'gin',
+  'fromage', 'chocolat', 'pain', 'verre', 'enfant', 'duo', 'initiation', 'stage', 'team']);
+const WC_WORDS = {
+  degustation: 'dégustation', ceramique: 'céramique', ceramiste: 'céramiste', decouverte: 'découverte', creation: 'création',
+  creations: 'créations', specialite: 'spécialité', the: 'thé', thes: 'thés', cafe: 'café', biere: 'bière', bieres: 'bières',
+  chevre: 'chèvre', chevres: 'chèvres', patisserie: 'pâtisserie', a: 'à', foret: 'forêt', vegetal: 'végétal', vegetale: 'végétale',
+  electrique: 'électrique', creez: 'créez', realisez: 'réalisez', epices: 'épices', cremes: 'crèmes', decoration: 'décoration',
+  theiere: 'théière', equipe: 'équipe', etoile: 'étoile', metal: 'métal', cosmetique: 'cosmétique', cosmetiques: 'cosmétiques',
+  bebe: 'bébé', serigraphie: 'sérigraphie', pate: 'pâte', pates: 'pâtes', oeuvre: 'œuvre', coeur: 'cœur', noel: 'Noël',
+  maroquiniere: 'maroquinière', creoles: 'créoles', plaquees: 'plaquées', martelees: 'martelées', medailles: 'médailles',
+  piece: 'pièce', upcyclee: 'upcyclée', cuillere: 'cuillère', coreen: 'coréen', torrefaction: 'torréfaction', fete: 'fête',
+  chevaliere: 'chevalière', mixologie: 'mixologie', reve: 'rêve', modele: 'modèle', poterie: 'poterie', eco: 'éco',
+};
+const WC_CATS = [
+  [/bijou|bague|bracelet|collier|boucles|alliance|creole|medaille|chevaliere|pendentif/, 'bijouterie'],
+  [/couteau|coutel|forge|metal|soudure|couverts/, 'métal & coutellerie'],
+  [/\bbois\b|cuillere|\bbol\b|chantournage|planche|\bbanc\b|menuis|ebenist|skate/, 'bois'],
+  [/cuir|maroquin|\bsac\b|portefeuille|ceinture/, 'cuir'],
+  [/cerami|poterie|\btour\b|modelage|faience|porcelaine|argile|emaill/, 'céramique'],
+  [/degust|\bvins?\b|biere|\bgins?\b|\bthes?\b|cafe|spiritueux|armagnac|whisky|mixolog|cocktail|torrefaction|latte/, 'dégustation'],
+  [/cuisine|patisser|chocolat|\bpain\b|boulang|choux|macaron|fromag|tomme|mozzarella|chevre|brebis|fermier/, 'cuisine & produits'],
+  [/textile|couture|tiss|broderie|tufting|macrame|tricot|crochet|jogakbo|teinture|serigraph/, 'textile'],
+  [/photo|argentique/, 'photo'],
+  [/parfum|bougie|savon|saponification|cosmeti|creme/, 'senteurs & cosmétiques'],
+  [/fleur|floral|kokedama|vegetal|terrarium|plante|apicult|ruche/, 'nature & fleurs'],
+  [/verre|vitrail/, 'verre'],
+  [/reliure|papier|carnet|calligraph|gravure|dessin|peinture|aquarelle/, 'papier & dessin'],
+];
+
+async function fetchWecandoo() {
+  const xml = await get(WECANDOO_SITEMAP);
+  const slugs = new Map(); // "toulouse-damien-couteau-pliant" et "...-2" = le même atelier
+  for (const m of xml.matchAll(/<loc>https:\/\/wecandoo\.fr\/atelier\/(toulouse-[a-z0-9-]+)<\/loc>/g)) {
+    const base = m[1].replace(/-\d+$/, '');
+    if (!slugs.has(base)) slugs.set(base, m[1]);
+  }
+  if (!slugs.size) throw new Error('aucun atelier toulousain dans le plan du site');
+  const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+  const out = [];
+  for (const [base, full] of slugs) {
+    const words = base.replace(/^toulouse-/, '').split('-').filter(Boolean);
+    let who = '';
+    if (words.length > 1 && !WC_NOT_NAME.has(words[0])) who = cap(words.shift());
+    while (words.length > 1 && ['boire', 'atelier', 'artisan'].includes(words[0])) words.shift(); // rubriques
+    const title = words.map((w) => WC_WORDS[w] || w).join(' ');
+    const cat = WC_CATS.find(([re]) => re.test(words.join(' ')))?.[1] || '';
+    out.push({
+      id: `wc-${base}`,
+      name: cap(title) + (who ? ` · avec ${who}` : ''),
+      kind: 'Activité', detail: cat ? `atelier ${cat}` : 'atelier',
+      city: 'Toulouse', lat: null, lon: null, thin: true,
+      url: `https://wecandoo.fr/atelier/${full}`,
+      source: 'Wecandoo',
+    });
+  }
+  return out;
+}
+
 // (Le Guide Michelin a été essayé : il renvoie une page anti-robots aux serveurs de GitHub. On ne la contourne
 // pas, donc il n'est pas dans les sources. Le lien 📍 de chaque fiche ouvre Google Maps et ses avis.)
 const PLACE_SOURCES = [
   { name: 'OpenStreetMap', site: 'https://www.openstreetmap.org/#map=13/43.6045/1.4440', run: fetchOSM, complete: () => osmComplete },
   { name: 'Funbooker', site: FUNBOOKER, run: fetchFunbooker, complete: () => true },
+  { name: 'Wecandoo', site: 'https://wecandoo.fr/ateliers/toulouse', run: fetchWecandoo, complete: () => true },
 ];
 
 const metres = (a, b) => {

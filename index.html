@@ -46,20 +46,29 @@
         <input id="q" type="search" placeholder="Zénith, jazz, Capitole, gratuit…" autocomplete="off" aria-label="Rechercher">
       </label>
     </div>
-    <nav class="when" id="when" aria-label="Période">
-      <button data-when="today">Aujourd'hui</button>
-      <button data-when="tomorrow">Demain</button>
-      <button data-when="weekend">Ce week-end</button>
-      <button data-when="nextweekend">Week-end pro</button>
-      <button data-when="7days">7 jours</button>
-      <button data-when="nextweek">Semaine pro</button>
-      <button data-when="30days">30 jours</button>
-      <button data-when="all">Tout</button>
-      <button data-when="custom">Dates…</button>
+    <nav class="mainnav" role="tablist" aria-label="Rubriques">
+      <button role="tab" data-tab="events" id="tabEvents"><span aria-hidden="true">📅</span> Agenda</button>
+      <button role="tab" data-tab="plan" id="tabPlan"><span aria-hidden="true">✨</span> Mon programme</button>
+      <button role="tab" data-tab="dates" id="tabDates"><span aria-hidden="true">💕</span> Idées date</button>
+      <button role="tab" data-tab="places" id="tabPlaces"><span aria-hidden="true">📍</span> Lieux &amp; restos</button>
     </nav>
-    <div class="custom" id="custom" hidden>
-      <label>Du <input type="date" id="from"></label>
-      <label>au <input type="date" id="to"></label>
+    <div class="period" id="period">
+      <div class="when" id="when" aria-label="Période">
+        <button data-when="today">Aujourd'hui</button>
+        <button data-when="tomorrow">Demain</button>
+        <button data-when="weekend">Week-end</button>
+        <button data-when="7days">Semaine</button>
+        <button data-when="custom">📅 Choisir une date</button>
+      </div>
+      <div class="range">
+        <button class="range__btn" id="prev" type="button" aria-label="Période précédente">‹</button>
+        <span id="rangeLabel" class="range__label"></span>
+        <button class="range__btn" id="next" type="button" aria-label="Période suivante">›</button>
+      </div>
+      <div class="custom" id="custom" hidden>
+        <label>Le <input type="date" id="from"></label>
+        <label>jusqu'au <input type="date" id="to"> <small>(facultatif)</small></label>
+      </div>
     </div>
   </header>
 
@@ -69,6 +78,10 @@
         <h2>Filtres</h2>
         <button class="link" id="reset" type="button">Tout effacer</button>
       </div>
+
+      <section class="toggles">
+        <label class="pickbox"><input type="checkbox" id="pickBox" checked> <span><strong>✦ Sélection</strong> — seulement ce qui vaut le coup (6/10 et plus, 8 max par jour)</span></label>
+      </section>
 
       <section>
         <h3>Type de sortie</h3>
@@ -120,18 +133,8 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
           Filtres <span class="badge" id="activeCount" hidden></span>
         </button>
-        <div class="seg pick" id="pick" aria-label="Pré-filtre">
-          <button data-pick="best" title="Seulement ce qui vaut le coup, selon tes goûts">Sélection</button>
-          <button data-pick="all" title="Toutes les sorties, sans pré-filtre">Tout</button>
-        </div>
-        <div class="tabs" role="tablist">
-          <button role="tab" data-tab="events" id="tabEvents">Au programme</button>
-          <button role="tab" data-tab="ongoing" id="tabOngoing">En continu</button>
-          <button role="tab" data-tab="plan" id="tabPlan">Mon programme</button>
-          <button role="tab" data-tab="places" id="tabPlaces">Lieux &amp; restos</button>
-        </div>
+        <p class="summary" id="summary" aria-live="polite"></p>
       </div>
-      <p class="summary" id="summary" aria-live="polite"></p>
       <div id="list" class="list"></div>
       <button id="more" class="more" type="button" hidden>Voir plus</button>
     </main>
