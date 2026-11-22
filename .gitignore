@@ -6,3 +6,9 @@ Thumbs.db
 # La liste en clair ne doit JAMAIS partir sur GitHub (le dépôt est public) :
 # seule data/events.enc.json (chiffrée) est publiée.
 data/events.json
+
+# fichiers de test à la racine (pages téléchargées pour essai) : jamais dans le dépôt
+/*.html
+/*.xml
+/*.json
+!/index.html
