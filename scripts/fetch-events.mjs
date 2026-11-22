@@ -105,7 +105,7 @@ function tidyCase(s) {
 
 // ---------- catégories ----------
 
-export const CATEGORIES = ['Concert', 'Soirée', 'Rencontre', 'Spectacle', 'Humour', 'Expo', 'Cinéma', 'Festival', 'Atelier', 'Conférence', 'Visite', 'Sport', 'Marché', 'Autre'];
+export const CATEGORIES = ['Concert', 'Soirée', 'Rencontre', 'Spectacle', 'Humour', 'Expo', 'Cinéma', 'Festival', 'Atelier', 'Conférence', 'Rando', 'Visite', 'Sport', 'Marché', 'Autre'];
 
 const RULES = [
   ['Humour', /\b(stand ?up|humour|humoriste|comedy|comedie club|one (wo)?man show|impro(visation)?)\b/],
@@ -118,7 +118,8 @@ const RULES = [
   ['Spectacle', /\b(theatre|spectacle|danse|ballet|cirque|opera|marionnettes?|conte|magie|cabaret|comedie musicale|piece)\b/],
   ['Atelier', /\b(atelier|stage|workshop|initiation|cours|masterclass|fabrication|diy)\b/],
   ['Conférence', /\b(conference|rencontre|debat|table ronde|lecture|dedicace|causerie)\b/],
-  ['Visite', /\b(visite|balade|promenade|randonnee|parcours|patrimoine)\b/],
+  ['Rando', /\b(randonnees?|randos?|trek|trekking|marche nordique|raquettes|sentiers?|gr ?\d{1,3})\b/],
+  ['Visite', /\b(visite|balade|promenade|parcours|patrimoine)\b/],
   ['Sport', /\b(match|course|marathon|trail|running|yoga|sport|tournoi|rugby|football|basket|handball|velo|fitness|escalade|trial)\b/],
   ['Marché', /\b(marche|brocante|vide[- ]grenier|salon|foire|braderie|bourse)\b/],
 ];
@@ -380,6 +381,116 @@ const fetchMeetup = ldSource('Meetup', 'mu', [
 ], 'Rencontre');
 
 const fetchAllEvents = ldSource('AllEvents', 'ae', ['https://allevents.in/toulouse'], 'Autre');
+
+// ---------- source : Pyrénées Club de France (randonnées et haute montagne au départ de Toulouse) ----------
+// Leur flux RSS public liste les sorties ; la page de chaque sortie donne niveaux, distances, dénivelés,
+// heure et lieu de départ. On localise le lieu (Base Adresse Nationale, sinon OpenStreetMap/Nominatim) pour
+// la météo sur place, et on calcule le temps de route depuis Toulouse (OSRM, OpenStreetMap).
+// Lieu et temps de route sont gardés d'un jour à l'autre : chaque sortie n'est localisée qu'une fois.
+
+const PYC_FEED = 'https://www.pyreneesclub.fr/category/sortie-journee/feed/';
+const MOIS = { janvier: 1, fevrier: 2, mars: 3, avril: 4, mai: 5, juin: 6, juillet: 7, aout: 8, septembre: 9, octobre: 10, novembre: 11, decembre: 12 };
+const TOULOUSE = { lat: 43.6045, lon: 1.4440 };
+const pretty = (s) => s.toLowerCase().replace(/(^|[\s\-'’(])(\p{L})/gu, (_, p, c) => p + c.toUpperCase()).replace(/\b(De|Du|Des|La|Le|Les|Sur|En|D’|L’)\b/g, (w) => w.toLowerCase());
+
+async function geocode(place, dept) {
+  // 1) une commune française : Base Adresse Nationale (service public, sans clé)
+  try {
+    const u = new URL('https://api-adresse.data.gouv.fr/search/');
+    u.searchParams.set('q', place); u.searchParams.set('type', 'municipality'); u.searchParams.set('limit', '5');
+    const d = await get(u, { json: true, tries: 2 });
+    const f = (d.features || []).find((x) => !dept || String(x.properties.postcode || '').startsWith(dept));
+    if (f && f.properties.score > 0.5) return { lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0], how: 'commune' };
+  } catch { /* on tente la suite */ }
+  // 2) un sommet, un col, un lac… : Nominatim (OpenStreetMap), 1 requête par seconde au plus
+  try {
+    await sleep(1100);
+    const u = new URL('https://nominatim.openstreetmap.org/search');
+    u.searchParams.set('q', place); u.searchParams.set('format', 'jsonv2'); u.searchParams.set('limit', '1'); u.searchParams.set('countrycodes', 'fr,ad,es');
+    const r = await fetch(u, { headers: { 'user-agent': 'sorties-toulouse/1.0 (agenda perso, quelques requêtes par semaine)', 'accept-language': 'fr' }, signal: AbortSignal.timeout(20000) });
+    const [x] = r.ok ? await r.json() : [];
+    if (x) return { lat: +x.lat, lon: +x.lon, how: 'osm' };
+  } catch { /* lieu introuvable */ }
+  return null;
+}
+
+async function driveFromToulouse(to) {
+  try {
+    const d = await get(`https://router.project-osrm.org/route/v1/driving/${TOULOUSE.lon},${TOULOUSE.lat};${to.lon},${to.lat}?overview=false`, { json: true, tries: 2 });
+    const r = d.routes?.[0];
+    return r ? { min: Math.round(r.duration / 60), km: Math.round(r.distance / 1000) } : null;
+  } catch { return null; }
+}
+
+async function fetchPyreneesClub(previous) {
+  const xml = await get(PYC_FEED);
+  const prevById = new Map((previous?.events || []).map((e) => [e.id, e]));
+  const out = [];
+  for (const it of [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map((m) => m[1])) {
+    const title = clean((it.match(/<title>([\s\S]*?)<\/title>/) || [])[1]);
+    const link = clean((it.match(/<link>([\s\S]*?)<\/link>/) || [])[1]).split('?')[0];
+    const dm = fold(title).match(/(\d{1,2})\s+(janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre)\s+(\d{4})/);
+    if (!dm || !link) continue;
+    const date = `${dm[3]}-${pad2(MOIS[dm[2]])}-${pad2(dm[1])}`;
+    if (date < today || date > horizon) continue;
+    const hm = /^hm\b/i.test(title) || /haute montagne/i.test(title);
+    const type = hm ? 'hm' : /raquette/i.test(title) ? 'raquettes' : /ski/i.test(title) ? 'ski' : 'rando';
+    // lieu : "Randonnée Pédestre : AURIGNAC (31) • Dimanche…" ou "HM – LE TUC DE QUERNER – Dimanche…"
+    const pm = title.match(/:\s*([^(•–]+?)\s*\((\d{2,3})\)/) || title.match(/[–-]\s*([^–•]+?)\s*[–•]/);
+    const place = pm ? pm[1].trim() : '';
+    const dept = pm && pm[2] ? pm[2] : '';
+    if (!place) continue;
+
+    let page = '';
+    try { await sleep(800); page = await get(link); } catch { /* le résumé du flux suffira */ }
+    const art = (page.match(/<article[\s\S]*?<\/article>/) || [page])[0];
+    const txt = clean(art.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' | ')).replace(/(\s*\|\s*)+/g, ' | ');
+    const levels = [...txt.matchAll(/Niveau\s*(\d)\s*:\s*(\d+(?:[.,]\d)?)\s*km\s*D\s*\+?\/?-?\s*(\d{2,4})\s*m/gi)].map((m) => ({ n: +m[1], km: +m[2].replace(',', '.'), dplus: +m[3] }));
+    const tm = txt.match(/Niveau\s*(T\d)\*?\s*:\s*\+?\/?-?\s*(\d{3,4})\s*m/i);
+    // altitude du sommet : premier "2389m" du texte, une fois retiré le dénivelé ("Niveau T5 : +/- 1500 m")
+    const alt = hm ? +(txt.replace(/Niveau\s*T\d[^|]*/i, '').match(/(\d{4})\s?m\b/)?.[1] || 0) || null : null;
+    const dep = txt.match(/D[ée]part[^|]*?\|?\s*~?\s*\|?\s*(\d{1,2})h(\d{2})?\s*\|?\s*([^|]{4,80})/i);
+    const meet = dep ? `${dep[1]}h${dep[2] || ''} · ${clean(dep[3]).replace(/^[\s.,:]+|[\s.]+$/g, '')}` : '';
+    const phone = txt.match(/t[ée]l[ée]phone au\s*([\d .]{10,16})/i)?.[1]?.replace(/[\s.]+$/, '').trim() || '';
+    const licence = txt.match(/licence\s+FFME[^|]{0,80}?(\d+)\s*€/i)?.[1] || '';
+    const places = txt.match(/(\d{1,2})\s+participants/i)?.[1] || '';
+    const desc = clean(((it.match(/<description>([\s\S]*?)<\/description>/) || [])[1] || '').replace(/<!\[CDATA\[|\]\]>/g, ''), 220)
+      .replace(/^Niveau[^:]*:\s*\+?\/?-?\s*\d+\s*m\s*/i, '');
+
+    const id = `pyc-${link.replace(/\/$/, '').split('/').pop()}`;
+    const old = prevById.get(id);
+    let geo = old && old.lat != null ? { lat: old.lat, lon: old.lon } : null;
+    if (!geo) geo = await geocode(pretty(place), dept);
+    if (!geo && txt) {
+      // le titre et la carte n'écrivent pas toujours pareil ("Querner" / "Quer Ner") : on reprend l'orthographe du texte
+      const keyWord = pretty(place).replace(/^(le|la|les|l’|l')\s+/i, '').split(/\s+/)[0];
+      const alt2 = txt.match(new RegExp(`\\b${keyWord}\\s+(?:de |du |des |d’|d')?[A-ZÉÈÀ][\\wÀ-ÿ'’-]*(?:\\s[A-ZÉÈÀ][\\wÀ-ÿ'’-]*)?`))?.[0];
+      if (alt2 && fold(alt2) !== fold(place)) geo = await geocode(alt2, '');
+    }
+    let drive = old?.rando?.drive || null;
+    if (!drive && geo) drive = await driveFromToulouse(geo);
+
+    const name = pretty(place) + (dept ? ` (${dept})` : '');
+    out.push({
+      id,
+      title: `${hm ? 'Haute montagne' : type === 'raquettes' ? 'Raquettes' : type === 'ski' ? 'Ski de randonnée' : 'Randonnée'} : ${name}${alt ? ` (${alt} m)` : ''}`,
+      desc,
+      sessions: [[dep ? `${date}T${pad2(dep[1])}:${dep[2] || '00'}` : date, dep ? `${date}T${pad2(dep[1])}:${dep[2] || '00'}` : date]],
+      venue: name, city: pretty(place), lat: geo?.lat ?? null, lon: geo?.lon ?? null,
+      category: 'Rando', kids: false,
+      price: licence ? `non-membres : licence FFME du jour ${licence} €` : 'sortie du club (adhérents, essai à demander)',
+      url: link,
+      rando: {
+        type, levels, level: tm?.[1] || '', dplus: tm ? +tm[2] : levels.length ? Math.max(...levels.map((l) => l.dplus)) : null,
+        alt, meet, phone, places, drive,
+      },
+      source: 'Pyrénées Club',
+    });
+  }
+  if (!out.length) throw new Error('aucune sortie à venir dans le flux');
+  return out;
+}
+const pad2 = (n) => String(n).padStart(2, '0');
 
 // ---------- source optionnelle : Ticketmaster (API officielle, clé gratuite) ----------
 
@@ -688,9 +799,73 @@ async function fetchWecandoo() {
   return out;
 }
 
+// ---------- piscines (données ouvertes de Toulouse Métropole) et baignade l'été (OpenStreetMap) ----------
+
+async function fetchPiscines() {
+  const out = new Map();
+  const d = await get('https://data.toulouse-metropole.fr/api/explore/v2.1/catalog/datasets/piscines/records?limit=100', { json: true });
+  for (const r of d.results || []) {
+    const name = clean(r.nom_installation || r.nom_equipement);
+    if (!name || !r.geo_point_2d) continue;
+    const key = fold(name);
+    const bassin = clean(r.type_equipement || '').replace(/^Bassin\s+/i, '').toLowerCase();
+    const prev = out.get(key);
+    if (prev) { if (bassin && !prev.detail.includes(bassin)) prev.detail += `, ${bassin}`; continue; }
+    out.set(key, {
+      id: `pi-${key.replace(/[^a-z0-9]+/g, '-')}`, name, kind: 'Baignade', detail: `piscine · ${bassin || 'bassin'}`,
+      address: clean(r.adresse), city: 'Toulouse', lat: r.geo_point_2d.lat, lon: r.geo_point_2d.lon,
+      source: 'Piscines',
+    });
+  }
+  // lacs et bases de loisirs avec baignade (jusqu'à ~40 km), parcs aquatiques
+  try {
+    const els = await overpass('[out:json][timeout:60][bbox:43.30,1.05,43.90,1.85];(nwr["leisure"~"^(bathing_place|swimming_area)$"]["name"];nwr["leisure"="water_park"]["name"];);out center tags;');
+    for (const el of els) {
+      const t = el.tags || {};
+      const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
+      if (lat == null) continue;
+      const name = clean(t.name);
+      out.set(`osm-${el.id}`, {
+        id: `ba-${el.type[0]}${el.id}`, name, kind: 'Baignade',
+        detail: t.leisure === 'water_park' ? 'parc aquatique' : 'baignade en plein air (l\'été)',
+        address: '', city: clean(t['addr:city'] || ''), lat: +lat.toFixed(6), lon: +lon.toFixed(6),
+        url: t.website || t['contact:website'] || '', outdoor: t.leisure !== 'water_park', source: 'Piscines',
+      });
+    }
+  } catch { /* les piscines suffisent */ }
+  return [...out.values()];
+}
+
+// ---------- bons plans voyage : flux RSS public de Voyages Pirates (rechargé chaque jour) ----------
+
+const DEALS_FEED = 'https://www.voyagespirates.fr/feed';
+async function fetchDeals() {
+  const xml = await get(DEALS_FEED);
+  const out = [];
+  for (const it of [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map((m) => m[1])) {
+    const pick = (tag) => (it.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`)) || [])[1]?.replace(/<!\[CDATA\[|\]\]>/g, '') || '';
+    const title = clean(pick('title'));
+    const link = clean(pick('link')).split('?')[0];
+    const pub = new Date(pick('pubDate'));
+    if (!title || !link || isNaN(pub) || Date.now() - pub > 21 * 864e5) continue;
+    const descHtml = pick('description') + pick('content:encoded');
+    const image = it.match(/<enclosure[^>]+url="([^"]+)"/)?.[1] || it.match(/<media:content[^>]+url="([^"]+)"/)?.[1] || descHtml.match(/<img[^>]+src="([^"]+)"/)?.[1] || '';
+    const desc = clean(descHtml, 220);
+    out.push({
+      id: `vp-${link.replace(/\/$/, '').split('/').pop()}`,
+      title, desc, url: link, image, date: pub.toISOString().slice(0, 10),
+      toulouse: /toulouse|blagnac/i.test(`${title} ${desc}`),
+      source: 'Voyages Pirates',
+    });
+  }
+  if (!out.length) throw new Error('aucun bon plan récent dans le flux');
+  return out;
+}
+
 // (Le Guide Michelin a été essayé : il renvoie une page anti-robots aux serveurs de GitHub. On ne la contourne
 // pas, donc il n'est pas dans les sources. Le lien 📍 de chaque fiche ouvre Google Maps et ses avis.)
 const PLACE_SOURCES = [
+  { name: 'Piscines', site: 'https://data.toulouse-metropole.fr/explore/dataset/piscines/', run: fetchPiscines, complete: () => true },
   { name: 'OpenStreetMap', site: 'https://www.openstreetmap.org/#map=13/43.6045/1.4440', run: fetchOSM, complete: () => osmComplete },
   { name: 'Funbooker', site: FUNBOOKER, run: fetchFunbooker, complete: () => true },
   { name: 'Wecandoo', site: 'https://wecandoo.fr/ateliers/toulouse', run: fetchWecandoo, complete: () => true },
@@ -738,6 +913,7 @@ const SOURCES = [
   { name: 'Eventbrite', site: 'https://www.eventbrite.fr/d/france--toulouse/events/', run: fetchEventbrite },
   { name: 'Meetup', site: 'https://www.meetup.com/find/fr--toulouse/', run: fetchMeetup },
   { name: 'AllEvents', site: 'https://allevents.in/toulouse', run: fetchAllEvents },
+  { name: 'Pyrénées Club', site: 'https://www.pyreneesclub.fr/category/sortie-journee/', run: fetchPyreneesClub },
   { name: 'Ticketmaster', site: 'https://www.ticketmaster.fr/fr/ville/toulouse', run: fetchTicketmaster },
 ];
 
@@ -805,7 +981,7 @@ async function main() {
   for (const s of SOURCES) {
     const t0 = Date.now();
     try {
-      const evs = await s.run();
+      const evs = await s.run(previous);
       if (evs === null) { console.log(`· ${s.name} : désactivé (pas de clé)`); continue; }
       if (!evs.length) throw new Error('0 événement récupéré');
       evs.forEach((e) => all.push(e));
@@ -861,11 +1037,24 @@ async function main() {
   }
   const places = mergePlaces(placeList).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
 
+  // bons plans voyage (chaque jour) ; en panne : ceux d'hier
+  let deals = [];
+  try {
+    deals = await fetchDeals();
+    report.push({ name: 'Voyages Pirates', site: 'https://www.voyagespirates.fr/', ok: true, count: deals.length, deals: true });
+    console.log(`✓ Voyages Pirates : ${deals.length} bons plans`);
+  } catch (err) {
+    deals = previous.deals || [];
+    report.push({ name: 'Voyages Pirates', site: 'https://www.voyagespirates.fr/', ok: false, count: deals.length, deals: true, error: String(err.message || err).slice(0, 200) });
+    console.warn(`✗ Voyages Pirates : ${err.message} — ${deals.length} repris de la veille`);
+  }
+
   const head = { generatedAt: new Date().toISOString(), today, horizon, placesAt, sources: report, categories: CATEGORIES };
   // un élément par ligne : l'historique Git reste lisible et léger d'un jour à l'autre
   const toJson = (h) => JSON.stringify(h).slice(0, -1) +
     ',"events":[\n' + events.map((e) => JSON.stringify(e)).join(',\n') + '\n]' +
-    ',"places":[\n' + places.map((p) => JSON.stringify(p)).join(',\n') + '\n]}\n';
+    ',"places":[\n' + places.map((p) => JSON.stringify(p)).join(',\n') + '\n]' +
+    ',"deals":[\n' + deals.map((x) => JSON.stringify(x)).join(',\n') + '\n]}\n';
   const json = toJson(head);
   await mkdir(dirname(OUT), { recursive: true });
   if (!process.env.CI) {

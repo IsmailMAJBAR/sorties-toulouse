@@ -24,8 +24,8 @@ const fmtShort = new Intl.DateTimeFormat('fr-FR', { weekday: 'short', day: 'nume
 const fmtDM = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' });
 const fmtStamp = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 
-const CAT_ORDER = ['Concert', 'Soirée', 'Rencontre', 'Spectacle', 'Humour', 'Expo', 'Cinéma', 'Festival', 'Atelier', 'Conférence', 'Visite', 'Sport', 'Marché', 'Autre'];
-const CAT_VAR = { Concert: 'concert', Soirée: 'soiree', Rencontre: 'rencontre', Spectacle: 'spectacle', Humour: 'humour', Expo: 'expo', Cinéma: 'cinema', Festival: 'festival', Atelier: 'atelier', Conférence: 'conference', Visite: 'visite', Sport: 'sport', Marché: 'marche', Autre: 'autre' };
+const CAT_ORDER = ['Concert', 'Soirée', 'Rencontre', 'Spectacle', 'Humour', 'Expo', 'Cinéma', 'Festival', 'Atelier', 'Conférence', 'Rando', 'Visite', 'Sport', 'Marché', 'Autre'];
+const CAT_VAR = { Rando: 'rando', Concert: 'concert', Soirée: 'soiree', Rencontre: 'rencontre', Spectacle: 'spectacle', Humour: 'humour', Expo: 'expo', Cinéma: 'cinema', Festival: 'festival', Atelier: 'atelier', Conférence: 'conference', Visite: 'visite', Sport: 'sport', Marché: 'marche', Autre: 'autre' };
 const WHEN_LABEL = { today: "Aujourd'hui", tomorrow: 'Demain', weekend: 'Ce week-end', nextweekend: 'Week-end prochain', '7days': '7 prochains jours', nextweek: 'Semaine prochaine', '30days': '30 prochains jours', all: 'Tout', custom: 'Dates choisies' };
 const PAGE = 80;
 
@@ -45,7 +45,7 @@ const TASTE_VAL = { love: 2.5, ok: 0, nope: -4 };
 // Par défaut : ce qui fait tester, apprendre, découvrir passe devant (ateliers, initiations, expériences).
 const DEFAULT_TASTES = {
   Concert: 'love', Soirée: 'ok', Rencontre: 'ok', Spectacle: 'love', Humour: 'love', Expo: 'ok', Cinéma: 'ok',
-  Festival: 'love', Atelier: 'love', Conférence: 'ok', Visite: 'ok', Sport: 'ok', Marché: 'ok', Autre: 'ok',
+  Festival: 'love', Atelier: 'love', Conférence: 'ok', Rando: 'love', Visite: 'ok', Sport: 'ok', Marché: 'ok', Autre: 'ok',
 };
 // La note affichée est sur 10 : 5 + la somme des bonus/malus (bornée entre 0 et 10).
 const BASE = 5;
@@ -99,10 +99,12 @@ function score(e) {
   const boring = e._text.match(BORING);
   if (boring) add(-5, `Sent le « pas ouf » : « ${boring[0]} »`);
   if (e.kids && !state.kids) add(-1.5, 'Pensé pour les enfants');
-  add(e.image ? 0.3 : -0.7, e.image ? 'Fiche avec photo' : 'Pas de photo (fiche peu soignée)');
+  const rando = e.category === 'Rando'; // une rando est forcément hors de la ville, et souvent sans photo
+  if (rando && e.rando) add(0.5, 'Sortie encadrée par un club (Pyrénées Club)');
+  if (!rando) add(e.image ? 0.3 : -0.7, e.image ? 'Fiche avec photo' : 'Pas de photo (fiche peu soignée)');
   if ((e.desc || '').length > 60) add(0.3, 'Description détaillée');
   if (e.free) add(0.5, 'Gratuit');
-  if (e.city && e.city !== 'Toulouse') add(-0.7, `Hors Toulouse (${e.city})`);
+  if (!rando && e.city && e.city !== 'Toulouse') add(-0.7, `Hors Toulouse (${e.city})`);
   if (e.full) add(-0.5, 'Complet');
   add(Math.round(6 * (learned.cat[e.category] || 0)) / 10, `Tes ⭐ / 👎 sur « ${e.category} »`);
   add(learned.venue[fold(e.venue)] || 0, 'Tes ⭐ / 👎 sur ce lieu');
@@ -126,7 +128,7 @@ function readHash() {
   state.city = p.get('city') || '';
   state.moment = p.get('m') || '';
   state.free = p.has('free'); state.kids = p.has('kids'); state.favs = p.has('fav'); state.hideFull = p.has('nofull');
-  state.tab = ['ongoing', 'plan', 'dates', 'places'].includes(p.get('tab')) ? p.get('tab') : 'events';
+  state.tab = ['ongoing', 'plan', 'dates', 'places', 'deals'].includes(p.get('tab')) ? p.get('tab') : 'events';
   state.pkind = p.get('pk') || '';
   state.pick = p.has('all') ? 'all' : 'best';
   state.try = p.has('try');
@@ -275,6 +277,133 @@ function sessionTime(ss) {
   return fmtH(times[0]) + `<small>${times.length === 2 ? 'et ' + fmtH(times[1]) : `+ ${times.length - 1} séances`}</small>`;
 }
 
+// ---------- météo (Open-Meteo : gratuit, sans clé, prévisions à 16 jours) ----------
+// Toulouse pour les jours de l'agenda ; le lieu même de la rando (et son altitude) pour les randos.
+
+const WX = new Map();
+let TLS_WX = {};
+function forecast(lat, lon, alt) {
+  const key = `${(+lat).toFixed(2)},${(+lon).toFixed(2)},${alt || ''}`;
+  if (!WX.has(key)) {
+    const u = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}${alt ? `&elevation=${alt}` : ''}` +
+      '&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max&timezone=Europe%2FParis&forecast_days=16';
+    WX.set(key, fetch(u).then((r) => (r.ok ? r.json() : null)).then((j) => {
+      const out = {};
+      const d = j?.daily;
+      if (d) d.time.forEach((t, i) => { out[t] = { code: d.weathercode[i], max: d.temperature_2m_max[i], min: d.temperature_2m_min[i], rain: d.precipitation_probability_max[i] ?? 0, wind: d.wind_speed_10m_max[i] ?? 0 }; });
+      return out;
+    }).catch(() => ({})));
+  }
+  return WX.get(key);
+}
+function wmo(c) {
+  if (c === 0) return ['☀️', 'ensoleillé'];
+  if (c <= 2) return ['🌤️', 'éclaircies'];
+  if (c === 3) return ['☁️', 'couvert'];
+  if (c <= 48) return ['🌫️', 'brouillard'];
+  if (c <= 57) return ['🌦️', 'bruine'];
+  if (c <= 67) return ['🌧️', 'pluie'];
+  if (c <= 77) return ['🌨️', 'neige'];
+  if (c <= 82) return ['🌧️', 'averses'];
+  if (c <= 86) return ['🌨️', 'averses de neige'];
+  return ['⛈️', 'orage'];
+}
+const deg = (v) => `${Math.round(v)}°`;
+// petit badge météo de Toulouse pour un jour (titres des jours)
+function wxBadge(d) {
+  const f = TLS_WX[d];
+  if (!f) return '';
+  const [ico, lbl] = wmo(f.code);
+  return ` <span class="wxb" title="Météo à Toulouse : ${lbl}">${ico} ${deg(f.max)}<small>/${deg(f.min)}</small>${f.rain >= 40 ? ` · 💧${f.rain} %` : ''}</span>`;
+}
+// sorties en plein air : moins conseillées un jour de pluie (programme, idées date)
+const OUTDOOR = new Set(['Rando', 'Visite', 'Sport', 'Marché', 'Festival']);
+function rainAdj(e, d) {
+  const f = TLS_WX[d];
+  if (!f || f.rain < 60 || !OUTDOOR.has(e.category)) return null;
+  return [-2, `Pluie annoncée ce jour-là (${f.rain} %) : plutôt en plein air`];
+}
+
+// ---------- randos : infos pratiques, météo sur place, équipement ----------
+
+function gearFor(r, f, date) {
+  const m = +date.slice(5, 7);
+  const hm = r.type === 'hm' || (r.dplus || 0) >= 1000 || /T[4-6]/.test(r.level || '');
+  const long = (r.levels || []).some((l) => l.km >= 18) || (r.dplus || 0) >= 500;
+  const g = [
+    ['👟', hm ? 'Chaussures montantes à semelle rigide et crantée' : 'Chaussures de randonnée (déjà portées, pas neuves)'],
+    ['🎒', `Sac à dos ${hm ? '25-35' : '20-30'} L`],
+    ['💧', `Eau : ${hm || (f && f.max >= 25) ? '2 L' : '1,5 L'} minimum`],
+    ['🥪', 'Pique-nique + en-cas (fruits secs, barres)'],
+    ['🧥', 'Coupe-vent'],
+    ['🩹', 'Petite trousse de secours (pansements, ampoules)'],
+    ['📱', 'Téléphone chargé, papiers, un peu d\'argent'],
+  ];
+  if (long || hm) g.push(['🥢', 'Bâtons de marche (conseillés)']);
+  if (hm) {
+    g.push(['🕶️', 'Lunettes de soleil catégorie 3-4 + crème solaire (même en hiver)']);
+    g.push(['🧣', 'Couche chaude (polaire / doudoune) : il fait bien plus froid en haut']);
+    g.push(['🔦', 'Frontale']);
+    if (m >= 11 || m <= 5) g.push(['❄️', 'Neige possible en altitude : demande au club si crampons ou raquettes sont nécessaires']);
+  }
+  if (f) {
+    if (f.min <= 5) g.push(['🧤', `Bonnet, gants, sous-couche chaude (${deg(f.min)} au plus froid)`]);
+    if (f.rain >= 40) g.push(['☔', `Veste imperméable + protège-sac (${f.rain} % de risque de pluie)`]);
+    if (f.max >= 25) g.push(['🧢', `Casquette + crème solaire (${deg(f.max)} au plus chaud)`]);
+    if (f.wind >= 40) g.push(['💨', `Vent fort (${Math.round(f.wind)} km/h) : coupe-vent indispensable, prudence sur les crêtes`]);
+  } else {
+    g.push(['🌦️', 'Regarde la météo la veille (elle s\'affiche ici environ 2 semaines avant)']);
+  }
+  g.push(['🗑️', 'Un sac pour remporter ses déchets']);
+  return g;
+}
+const gearHtml = (g) => g.map(([i, t]) => `<li><span aria-hidden="true">${i}</span> ${esc(t)}</li>`).join('');
+const fmtDrive = (d) => `${Math.floor(d.min / 60) ? `${Math.floor(d.min / 60)}h${pad(d.min % 60)}` : `${d.min} min`}`;
+
+function randoHtml(e, ss) {
+  const r = e.rando;
+  if (!r) return '';
+  const date = sday((ss[0] || e.sessions[0])[0]);
+  const facts = [];
+  if (r.level) facts.push(`⛰️ Niveau ${esc(r.level)}`);
+  if (r.dplus && !(r.levels || []).length) facts.push(`D+ ${r.dplus.toLocaleString('fr-FR')} m`);
+  if (r.alt) facts.push(`sommet ${r.alt.toLocaleString('fr-FR')} m`);
+  const lv = (r.levels || []).map((l) => `niv. ${l.n} : ${String(l.km).replace('.', ',')} km / ${l.dplus} m`).join(' · ');
+  const go = [];
+  if (r.meet) go.push(`🚌 Départ ${esc(r.meet)}`);
+  if (r.drive) go.push(`🚗 ≈ ${fmtDrive(r.drive)} de route depuis Toulouse (${r.drive.km} km)`);
+  const geo = e.lat != null ? ` data-lat="${e.lat}" data-lon="${e.lon}" data-date="${date}"${r.alt ? ` data-alt="${r.alt}"` : ''}` : '';
+  return `<div class="rando"${geo}>
+    ${facts.length ? `<p>${facts.join(' · ')}</p>` : ''}
+    ${lv ? `<p>🥾 ${esc(lv)}</p>` : ''}
+    ${go.map((x) => `<p>${x}</p>`).join('')}
+    <p class="wx">${e.lat != null ? '🌡️ Météo sur place : chargement…' : '🌡️ Météo : lieu non localisé'}</p>
+    <details class="gear"><summary>🎒 Équipement conseillé</summary><ul>${gearHtml(gearFor(r, null, date))}</ul></details>
+    ${r.phone ? `<p>☎️ Inscription : <a href="tel:${esc(r.phone.replace(/\s/g, ''))}">${esc(r.phone)}</a>${r.places ? ` · ${esc(r.places)} places` : ''}</p>` : ''}
+  </div>`;
+}
+
+// météo sur le lieu même de chaque rando affichée, puis équipement ajusté à cette météo
+function hydrateRando(root) {
+  for (const el of root.querySelectorAll('.rando[data-lat]')) {
+    const { lat, lon, date, alt } = el.dataset;
+    const card = el.closest('.card');
+    const e = EVENTS.find((x) => x.id === card?.dataset.id);
+    if (!e) continue;
+    forecast(lat, lon, alt).then((w) => {
+      const f = w[date];
+      const wxEl = el.querySelector('.wx');
+      if (f) {
+        const [ico, lbl] = wmo(f.code);
+        wxEl.innerHTML = `${ico} <strong>Météo sur place${alt ? ` (à ${(+alt).toLocaleString('fr-FR')} m)` : ''}</strong> : ${esc(lbl)}, ${deg(f.min)} → ${deg(f.max)} · 💧 ${f.rain} % · 💨 ${Math.round(f.wind)} km/h`;
+      } else {
+        wxEl.textContent = '🌡️ Météo sur place : affichée environ 2 semaines avant la sortie';
+      }
+      el.querySelector('.gear ul').innerHTML = gearHtml(gearFor(e.rando, f, date));
+    });
+  }
+}
+
 function noteHtml(sc, why) {
   const n = note10(sc);
   const lvl = sc >= TOP ? 'top' : sc >= THRESHOLD ? 'ok' : 'low';
@@ -294,8 +423,10 @@ function card(e, ss, ongoing = false, sc = 0, why = []) {
   // Google Maps sur le lieu (nom + adresse + ville ; sinon les coordonnées). Sur téléphone, ouvre l'appli Maps.
   const cityPart = e.city && !fold(`${e.venue} ${e.address}`).includes(fold(e.city)) ? e.city : '';
   const mapText = [e.venue, e.address, cityPart].filter(Boolean).join(', ');
+  // rando : la position exacte (un sommet n'a pas d'adresse) ; sinon nom + adresse du lieu
+  const useCoords = e.category === 'Rando' && e.lat != null;
   const mapUrl = 'https://www.google.com/maps/search/?api=1&query=' +
-    encodeURIComponent(mapText || (e.lat != null && e.lon != null ? `${e.lat},${e.lon}` : 'Toulouse'));
+    encodeURIComponent(useCoords ? `${e.lat},${e.lon}` : mapText || (e.lat != null && e.lon != null ? `${e.lat},${e.lon}` : 'Toulouse'));
   const last = e.sessions[e.sessions.length - 1][1];
   let when;
   if (ongoing) when = `<span class="card__time"><small>jusqu'au</small>${esc(fmtDM.format(toDate(last)))}</span>`;
@@ -319,6 +450,7 @@ function card(e, ss, ongoing = false, sc = 0, why = []) {
       <h3>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(e.title)}</a>` : esc(e.title)}</h3>
       ${place ? `<p class="card__meta"><a class="maplink" href="${esc(mapUrl)}" target="_blank" rel="noopener" title="Ouvrir dans Google Maps">${ICON.pin}<span>${esc(place)}</span></a></p>` : ''}
       ${e.desc ? `<p class="card__desc">${esc(e.desc)}</p>` : ''}
+      ${randoHtml(e, ss)}
     </div>
     ${img ? `<img class="card__thumb" src="${esc(img)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
     <div class="card__foot">
@@ -374,7 +506,7 @@ function render() {
       if (shown >= limit) break;
       const rel = relDay(d);
       const dayName = fmtDay.format(toDate(d));
-      html += `<section class="day"><h2 class="day__head">${esc(dayName[0].toUpperCase() + dayName.slice(1))}${rel ? ` <span class="rel">${rel}</span>` : ''} <small>${items.length + rest} sortie${items.length + rest > 1 ? 's' : ''}</small></h2><div class="cards">`;
+      html += `<section class="day"><h2 class="day__head">${esc(dayName[0].toUpperCase() + dayName.slice(1))}${rel ? ` <span class="rel">${rel}</span>` : ''} <small>${items.length + rest} sortie${items.length + rest > 1 ? 's' : ''}</small>${wxBadge(d)}</h2><div class="cards">`;
       for (const it of items) { if (shown >= limit) break; html += card(it.e, it.ss, false, it.sc, it.why); shown++; }
       html += '</div>';
       if (rest) html += `<button class="day__more" type="button" data-expand="${d}">+ ${rest} autre${rest > 1 ? 's' : ''} ce jour-là, moins bien notée${rest > 1 ? 's' : ''}</button>`;
@@ -396,6 +528,30 @@ function render() {
     html = plan.html;
     total = shown = plan.count;
     $('#summary').innerHTML = `<strong>Mon programme</strong> — ${esc(label)}${plan.cut ? ' (4 premiers jours)' : ''} · la mieux notée par créneau, sans doublon${pickNote}`;
+  } else if (state.tab === 'deals') {
+    // bons plans voyage : départs de Toulouse d'abord, puis les plus récents
+    const words = fold(state.q).split(/\s+/).filter(Boolean);
+    const deals = (DATA.deals || [])
+      .filter((x) => !words.length || words.every((w) => fold(`${x.title} ${x.desc}`).includes(w)))
+      .sort((x, y) => (y.toulouse - x.toulouse) || y.date.localeCompare(x.date));
+    const nTls = deals.filter((x) => x.toulouse).length;
+    $('#summary').innerHTML = `<strong>✈️ ${deals.length} bons plans voyage</strong> — des 3 dernières semaines, via Voyages Pirates · ${nTls ? `${nTls} au départ de Toulouse, en premier` : 'aucun ne précise un départ de Toulouse en ce moment'} · vérifie le prix sur le site, ils partent vite`;
+    html = `<div class="cards">${deals.map((x) => {
+      const u = safeUrl(x.url);
+      const ago = Math.round((Date.now() - toDate(x.date)) / 864e5);
+      return `<article class="card deal">
+        <div class="card__when"><span class="card__time card__kind" aria-hidden="true">✈️</span></div>
+        <div class="card__body">
+          <h3>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title)}</h3>
+          <p class="card__meta">${ago <= 0 ? "Publié aujourd'hui" : ago === 1 ? 'Publié hier' : `Publié il y a ${ago} jours`}</p>
+          ${x.desc ? `<p class="card__desc">${esc(x.desc)}</p>` : ''}
+        </div>
+        ${safeUrl(x.image) ? `<img class="card__thumb" src="${esc(x.image)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
+        <div class="card__foot"><div class="tags">${x.toulouse ? '<span class="tag tag--top">🛫 Départ Toulouse</span>' : ''}<span class="tag tag--src">${esc(x.source)}</span></div></div>
+      </article>`;
+    }).join('')}</div>`;
+    total = shown = deals.length || -1;
+    if (!deals.length) html = '<div class="empty"><strong>Pas de bon plan pour le moment.</strong>Le flux est relu chaque matin.</div>';
   } else if (state.tab === 'dates') {
     const ideas = buildDates(punctual, a, b);
     html = ideas.html;
@@ -415,6 +571,7 @@ function render() {
     html = `<div class="empty"><strong>Rien ne correspond.</strong>Essaie une autre période, ou retire un filtre.${ongoing.length && state.tab === 'events' ? `<br><br><button class="more" type="button" data-goto="ongoing">Voir les ${ongoing.length} activités en continu</button>` : ''}</div>`;
   }
   list.innerHTML = html;
+  hydrateRando(list);
   $('#more').hidden = shown >= total;
   $('#more').textContent = `Voir plus (${total - shown} restantes)`;
 }
@@ -423,6 +580,7 @@ function render() {
 const KINDS = [
   { k: 'Resto', label: 'Restos', icon: '🍽️' }, { k: 'Bar', label: 'Bars', icon: '🍸' }, { k: 'Café', label: 'Cafés', icon: '☕' },
   { k: 'Activité', label: 'Activités', icon: '🧗' }, { k: 'Lieu', label: 'Lieux à voir', icon: '🏛️' },
+  { k: 'Baignade', label: 'Baignade', icon: '🏊' },
 ];
 const KIND = Object.fromEntries(KINDS.map((x) => [x.k, x]));
 // cuisines "de tous les jours" : pas de bonus "à découvrir"
@@ -450,7 +608,11 @@ function placeScore(p) {
   }
   if (p.kind === 'Lieu' && p.notable) add(1, 'Lieu connu (fiche Wikipédia)');
   if (p.kind === 'Bar' && /cocktails|brasserie artisanale/.test(p.detail || '')) add(1, `Bar : ${p.detail}`);
-  add(p.url ? 0.5 : -0.5, p.url ? 'A un site web' : 'Pas de site web');
+  if (p.kind === 'Baignade') {
+    const summer = [6, 7, 8, 9].includes(new Date().getMonth() + 1);
+    if (p.outdoor) add(summer ? 2.5 : -2, summer ? 'Baignade en plein air : c\'est la saison' : 'Baignade en plein air : seulement l\'été');
+    else add(summer ? 1.5 : 1, p.detail?.startsWith('piscine') ? 'Piscine municipale (horaires sur la fiche de la piscine)' : 'Parc aquatique');
+  } else add(p.url ? 0.5 : -0.5, p.url ? 'A un site web' : 'Pas de site web');
   if (p.thin) add(-2, 'Peu d\'infos : ni prix, ni avis, ni adresse (tout est sur la page de l\'atelier)');
   if (/team building|equipe|seminaire/.test(p._fname)) add(-2, 'Pensé pour les équipes (team building)');
   if (/\benfants?\b|\bkids\b/.test(p._fname) && !state.kids) add(-1.5, 'Pensé pour les enfants');
@@ -617,9 +779,10 @@ function buildDates(punctual, a, b) {
     const ss = r.sess.filter((s) => { const h = time(s[0]); return h && h !== '00:00' && h >= '14:00'; });
     if (!ss.length) continue;
     const bonus = dateBonus(txt, r.e.kids);
-    const s = r.score + bonus.s;
+    const rain = rainAdj(r.e, sday(ss[0][0]));
+    const s = r.score + bonus.s + (rain ? rain[0] : 0);
     if (s < THRESHOLD) continue;
-    cands.push({ ...r, ss: [ss[0]], s, why: [...r.why, ...bonus.why] });
+    cands.push({ ...r, ss: [ss[0]], s, why: [...r.why, ...bonus.why, ...(rain ? [rain] : [])] });
   }
   cands.sort((x, y) => y.s - x.s);
   // jusqu'à 5 idées, 2 par jour max, en tournant avec 🎲 parmi les meilleures
@@ -641,7 +804,7 @@ function buildDates(punctual, a, b) {
   picked.forEach((c, i) => {
     const when = `${fmtShort.format(toDate(c.ss[0][0]))} · ${fmtH(time(c.ss[0][0]))}`;
     const anchor = c.e.lat != null && !/multi|plusieurs lieux|divers lieux/i.test(c.e.venue || '') ? { lat: c.e.lat, lon: c.e.lon } : null;
-    html += `<article class="idea"><p class="idea__head"><span class="idea__n">Idée ${i + 1}</span> ${esc(when)}</p>${card(c.e, c.ss, false, c.s, c.why)}${foodAndDrink(anchor, usedPlaces)}</article>`;
+    html += `<article class="idea"><p class="idea__head"><span class="idea__n">Idée ${i + 1}</span> ${esc(when)}${wxBadge(sday(c.ss[0][0]))}</p>${card(c.e, c.ss, false, c.s, c.why)}${foodAndDrink(anchor, usedPlaces)}</article>`;
   });
   html += '</section>';
 
@@ -687,7 +850,7 @@ function buildPlan(rows, a, b) {
   for (const d of days) {
     const dayName = fmtDay.format(toDate(d));
     const rel = relDay(d);
-    html += `<section class="day plan"><h2 class="day__head">${esc(dayName[0].toUpperCase() + dayName.slice(1))}${rel ? ` <span class="rel">${rel}</span>` : ''}</h2>`;
+    html += `<section class="day plan"><h2 class="day__head">${esc(dayName[0].toUpperCase() + dayName.slice(1))}${rel ? ` <span class="rel">${rel}</span>` : ''}${wxBadge(d)}</h2>`;
     let anchor = null; // dernière sortie du jour avec une position : on cherche à manger / boire autour
     for (const slot of SLOTS) {
       let cands = [];
@@ -698,7 +861,9 @@ function buildPlan(rows, a, b) {
           const h = time(s[0]);
           return sday(s[0]) === d && ((h && h !== '00:00' && h >= slot.from && h < slot.to) || (slot.fill && (!h || h === '00:00')));
         });
-        if (ss.length) cands.push({ ...r, ss });
+        if (!ss.length) continue;
+        const rain = rainAdj(r.e, d);
+        cands.push(rain ? { ...r, ss, score: r.score + rain[0], why: [...r.why, rain] } : { ...r, ss });
       }
       // rien à heure fixe le matin / l'après-midi : une expo ou activité en continu ouverte ce jour-là
       if (!cands.length && slot.fill) {
@@ -764,7 +929,7 @@ function syncControls() {
   if (state.when === 'custom') { const [a] = range(); $('#from').value = ymd(a); $('#to').value = state.to || ''; }
   // menu principal + période (pas de période pour les lieux, toujours dispo)
   $$('.mainnav [role=tab]').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === state.tab || (t.dataset.tab === 'events' && state.tab === 'ongoing'))));
-  $('#period').hidden = state.tab === 'places';
+  $('#period').hidden = state.tab === 'places' || state.tab === 'deals';
   // sur téléphone, le menu défile de côté : on garde la rubrique active visible
   const nav = $('.mainnav'), cur = nav.querySelector('[aria-selected="true"]');
   if (cur && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, cur.offsetLeft - nav.offsetLeft - 16);
@@ -1091,5 +1256,7 @@ async function start() {
   }
   renderStatic();
   render();
+  // météo de Toulouse (16 jours) : affichée dans les titres des jours et prise en compte s'il pleut
+  forecast(43.6045, 1.4440).then((w) => { TLS_WX = w || {}; render(); });
 }
 start();

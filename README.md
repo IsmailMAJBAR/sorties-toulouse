@@ -59,6 +59,25 @@ Les lieux sont rechargés **une fois par semaine**, source par source (`FORCE_PL
 `FORCE_PLACES=Funbooker` pour une seule source).
 Pas de note Google intégrée : le lien 📍 de chaque fiche ouvre le lieu dans Google Maps, avec ses avis.
 
+## Randos, météo, piscines, voyages
+
+- **Randos** : sorties du **Pyrénées Club de France** (flux RSS public + page de chaque sortie), catégorie
+  « Rando » : niveaux, distances, dénivelé, altitude du sommet, heure et lieu de départ (souvent en car du
+  club), téléphone d'inscription. Le lieu est localisé (Base Adresse Nationale, sinon OpenStreetMap/Nominatim)
+  et le **temps de route depuis Toulouse** calculé avec OSRM — une seule fois par sortie.
+- **Météo** (Open-Meteo, gratuit, sans clé, prévisions à 16 jours, demandée par le navigateur) : celle de
+  Toulouse dans le titre de chaque jour ; celle **du lieu même de la rando** (à l'altitude du sommet pour la
+  haute montagne) sur sa fiche. Un jour de pluie (≥ 60 %), les sorties en plein air passent derrière dans
+  Mon programme et Idées date.
+- **🎒 Équipement conseillé** sur chaque rando : la base (chaussures, eau, pique-nique, coupe-vent…) + selon
+  le type (haute montagne : bâtons, lunettes cat. 3-4, couche chaude, frontale, neige possible l'hiver) + selon
+  la météo annoncée (froid, pluie, chaleur, vent).
+- **🏊 Baignade** (Lieux & restos) : les piscines de Toulouse (données ouvertes de Toulouse Métropole) et, via
+  OpenStreetMap, les lieux de baignade en plein air et parcs aquatiques ; les baignades en plein air passent
+  devant de juin à septembre.
+- **✈️ Voyages** : les bons plans des 3 dernières semaines du flux RSS public de **Voyages Pirates**, ceux qui
+  partent de Toulouse en premier.
+
 ## Navigation
 
 - **4 rubriques** en haut : 📅 Agenda · ✨ Mon programme · 💕 Idées date · 📍 Lieux & restos

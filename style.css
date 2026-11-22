@@ -16,6 +16,7 @@
   --c-concert: #7c3aed;
   --c-soiree: #db2777;
   --c-rencontre: #5b8a1c;
+  --c-rando: #2f6f8f;
   --c-spectacle: #c2410c;
   --c-humour: #b7791f;
   --c-expo: #0f8b80;
@@ -49,6 +50,7 @@
     --c-concert: #b794f6;
     --c-soiree: #f472b6;
     --c-rencontre: #a3d65c;
+    --c-rando: #7cc4e4;
     --c-spectacle: #fb923c;
     --c-humour: #f6c453;
     --c-expo: #4fd1c5;
@@ -165,6 +167,22 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .bar .summary { margin: 0; flex: 1 1 280px; }
 .pickbox { align-items: flex-start !important; }
 .pickbox span { line-height: 1.35; }
+
+/* météo dans les titres des jours */
+.wxb { margin-left: auto; font-size: 13px; font-weight: 650; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; white-space: nowrap; }
+.wxb small { color: var(--ink-2); font-weight: 500; }
+.day__head { flex-wrap: wrap; }
+.idea__head .wxb { margin-left: 8px; }
+
+/* fiche rando : infos pratiques, météo sur place, équipement */
+.rando { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--c-rando) 8%, var(--surface)); border: 1px solid color-mix(in srgb, var(--c-rando) 25%, transparent); font-size: 13.5px; }
+.rando p { margin: 2px 0; }
+.rando .wx { margin-top: 6px; }
+.gear { margin-top: 6px; }
+.gear summary { cursor: pointer; font-weight: 700; }
+.gear ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 3px; }
+.gear li span { display: inline-block; width: 1.4em; }
+.card[data-kind="Baignade"] { --c: var(--c-cinema); }
 
 /* idées date */
 .idea { margin-top: 16px; }
@@ -364,6 +382,7 @@ select { width: 100%; background: var(--bg); border: 1px solid var(--line); bord
 .card[data-cat="Concert"] { --c: var(--c-concert); }
 .card[data-cat="Soirée"] { --c: var(--c-soiree); }
 .card[data-cat="Rencontre"] { --c: var(--c-rencontre); }
+.card[data-cat="Rando"] { --c: var(--c-rando); }
 .card[data-cat="Spectacle"] { --c: var(--c-spectacle); }
 .card[data-cat="Humour"] { --c: var(--c-humour); }
 .card[data-cat="Expo"] { --c: var(--c-expo); }
